@@ -1,4 +1,5 @@
-export type RouteMap = Record<string, string>;
+export type NamespaceRouteMap = Record<string, string>;
+export type RouteMap = Record<string, NamespaceRouteMap>;
 
 export interface GatewayUserIdentity {
   subject: string;

@@ -22,7 +22,7 @@ export class RouteRegistryService {
     }
 
     const routeMap = this.configService.get<RouteMap>('gateway.routeMap');
-    const target = routeMap?.[`${namespace}:${version}`];
+    const target = routeMap?.[namespace]?.[version];
 
     if (target) {
       await this.cacheManager.set(cacheKey, target, 60_000);

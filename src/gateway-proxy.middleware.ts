@@ -4,10 +4,26 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { STATUS_CODES } from 'node:http';
+import type { ServerResponse } from 'node:http';
 import { ConfigService } from '@nestjs/config';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import type { NextFunction, Request, Response } from 'express';
 import { RouteRegistryService } from './route-registry.service';
+
+interface ProxyErrorShape {
+  code?: string;
+}
+
+function isServerResponseLike(value: unknown): value is ServerResponse {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'setHeader' in value &&
+    'end' in value &&
+    'statusCode' in value
+  );
+}
 
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
@@ -58,6 +74,37 @@ export class GatewayProxyMiddleware implements NestMiddleware {
           if (issuer) {
             proxyReq.setHeader('x-oauth2-issuer-hint', issuer);
           }
+        },
+        error: (error, request, response) => {
+          if (!isServerResponseLike(response)) {
+            return;
+          }
+
+          if (response.headersSent) {
+            response.end();
+            return;
+          }
+
+          const proxyError = error as ProxyErrorShape;
+          const errorCode = proxyError.code ?? 'UPSTREAM_UNAVAILABLE';
+          const instance =
+            typeof request.url === 'string' && request.url ? request.url : '/';
+          const title = STATUS_CODES[502] ?? 'Bad Gateway';
+          const body = JSON.stringify({
+            type: 'urn:problem:gateway:upstream-unavailable',
+            title,
+            status: 502,
+            detail: 'Failed to receive response from upstream service.',
+            instance,
+            errorCode,
+          });
+
+          response.statusCode = 502;
+          response.setHeader(
+            'content-type',
+            'application/problem+json; charset=utf-8',
+          );
+          response.end(body);
         },
       },
     });

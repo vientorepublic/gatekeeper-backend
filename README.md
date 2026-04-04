@@ -24,8 +24,13 @@ NestJS 기반 API Gateway 서버입니다.
 
 ```json
 {
-  "orders:v1": "http://localhost:4001",
-  "billing:v1": "http://localhost:4002"
+  "orders": {
+    "v1": "http://localhost:4001",
+    "v2": "http://localhost:4003"
+  },
+  "billing": {
+    "v1": "http://localhost:4002"
+  }
 }
 ```
 
