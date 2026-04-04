@@ -5,9 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
-import type { ServerResponse } from 'node:http';
 import { ConfigService } from '@nestjs/config';
-import { createProxyMiddleware } from 'http-proxy-middleware';
 import type { NextFunction, Request, Response } from 'express';
 import { RouteRegistryService } from './route-registry.service';
 
@@ -20,16 +18,6 @@ interface RouteKey {
   version: string;
 }
 
-function isServerResponseLike(value: unknown): value is ServerResponse {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'setHeader' in value &&
-    'end' in value &&
-    'statusCode' in value
-  );
-}
-
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
   constructor(
@@ -37,7 +25,9 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     private readonly configService: ConfigService,
   ) {}
 
-  async use(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async use(req: Request, res: Response, _next: NextFunction): Promise<void> {
+    void _next;
+
     const { namespace, version } = this.extractRouteKey(req.path);
 
     if (!req.headers.authorization?.startsWith('Bearer ')) {
@@ -51,9 +41,11 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       );
     }
 
-    const proxy = this.createProxy(namespace, version, target);
-
-    void proxy(req, res, next);
+    try {
+      await this.forwardToUpstream(req, res, target, namespace, version);
+    } catch (error) {
+      this.writeUpstreamProblem(error, req.originalUrl || req.url, res);
+    }
   }
 
   private extractRouteKey(path: string): RouteKey {
@@ -69,19 +61,6 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     return { namespace, version };
   }
 
-  private createProxy(namespace: string, version: string, target: string) {
-    return createProxyMiddleware<Request, Response>({
-      target,
-      changeOrigin: true,
-      pathRewrite: (path) => this.rewritePath(path, namespace, version),
-      on: {
-        proxyReq: (proxyReq) => this.onProxyReq(proxyReq),
-        error: (error, request, response) =>
-          this.onProxyError(error, request.url, response),
-      },
-    });
-  }
-
   private rewritePath(
     path: string,
     namespace: string,
@@ -94,27 +73,115 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     return rewritten || '/';
   }
 
-  private onProxyReq(proxyReq: {
-    setHeader: (name: string, value: string) => void;
-  }): void {
+  private getOAuth2IssuerHint(): string | undefined {
     const issuer = this.configService.get<string>('gateway.oauth2Issuer', {
       infer: true,
     });
 
-    if (issuer) {
-      proxyReq.setHeader('x-oauth2-issuer-hint', issuer);
-    }
+    return issuer || undefined;
   }
 
-  private onProxyError(
-    error: unknown,
-    requestUrl: string | undefined,
-    response: unknown,
-  ): void {
-    if (!isServerResponseLike(response)) {
+  private async readRequestBody(req: Request): Promise<Buffer | undefined> {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD') {
+      return undefined;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      if (typeof chunk === 'string') {
+        chunks.push(Buffer.from(chunk));
+        continue;
+      }
+
+      if (Buffer.isBuffer(chunk)) {
+        chunks.push(chunk);
+        continue;
+      }
+
+      if (chunk instanceof Uint8Array) {
+        chunks.push(Buffer.from(chunk));
+      }
+    }
+
+    if (chunks.length === 0) {
+      return undefined;
+    }
+
+    return Buffer.concat(chunks);
+  }
+
+  private buildUpstreamHeaders(req: Request): Headers {
+    const headers = new Headers();
+
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (typeof value === 'undefined') {
+        continue;
+      }
+
+      if (Array.isArray(value)) {
+        headers.set(name, value.join(','));
+      } else {
+        headers.set(name, value);
+      }
+    }
+
+    headers.delete('host');
+    headers.delete('content-length');
+
+    const issuerHint = this.getOAuth2IssuerHint();
+    if (issuerHint) {
+      headers.set('x-oauth2-issuer-hint', issuerHint);
+    }
+
+    return headers;
+  }
+
+  private async forwardToUpstream(
+    req: Request,
+    res: Response,
+    target: string,
+    namespace: string,
+    version: string,
+  ): Promise<void> {
+    const rewrittenPath = this.rewritePath(
+      req.originalUrl || req.url,
+      namespace,
+      version,
+    );
+    const upstreamUrl = new URL(rewrittenPath, target).toString();
+    const body = await this.readRequestBody(req);
+
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: req.method,
+      headers: this.buildUpstreamHeaders(req),
+      body: body ? new Uint8Array(body) : undefined,
+      redirect: 'manual',
+    });
+
+    res.status(upstreamResponse.status);
+    upstreamResponse.headers.forEach((value, key) => {
+      if (key.toLowerCase() === 'transfer-encoding') {
+        return;
+      }
+
+      res.setHeader(key, value);
+    });
+
+    if (!upstreamResponse.body) {
+      res.end();
       return;
     }
 
+    const payload = Buffer.from(await upstreamResponse.arrayBuffer());
+    res.send(payload);
+  }
+
+  private writeUpstreamProblem(
+    error: unknown,
+    requestUrl: string | undefined,
+    response: Response,
+  ): void {
     if (response.headersSent) {
       response.end();
       return;
@@ -132,7 +199,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       errorCode,
     });
 
-    response.statusCode = 502;
+    response.status(502);
     response.setHeader(
       'content-type',
       'application/problem+json; charset=utf-8',
