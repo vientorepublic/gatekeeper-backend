@@ -1,5 +1,11 @@
 export type NamespaceRouteMap = Record<string, string>;
-export type RouteMap = Record<string, NamespaceRouteMap>;
+export type RouteMapEntry = string | NamespaceRouteMap;
+export type RouteMap = Record<string, RouteMapEntry>;
+
+export interface ResolvedRoute {
+  target: string;
+  keepVersionPrefix: boolean;
+}
 
 export interface GatewayUserIdentity {
   subject: string;

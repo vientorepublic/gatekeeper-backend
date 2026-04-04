@@ -18,6 +18,24 @@ interface RouteKey {
   version: string;
 }
 
+function isResolvedRoute(
+  value: unknown,
+): value is { target: string; keepVersionPrefix: boolean } {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as {
+    target?: unknown;
+    keepVersionPrefix?: unknown;
+  };
+
+  return (
+    typeof candidate.target === 'string' &&
+    typeof candidate.keepVersionPrefix === 'boolean'
+  );
+}
+
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
   constructor(
@@ -34,15 +52,25 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       throw new UnauthorizedException('Missing bearer token');
     }
 
-    const target = await this.routeRegistry.getTarget(namespace, version);
-    if (!target) {
+    const resolvedRoute = await this.routeRegistry.getTarget(
+      namespace,
+      version,
+    );
+    if (!isResolvedRoute(resolvedRoute)) {
       throw new NotFoundException(
         `No upstream route found for namespace "${namespace}" and version "${version}".`,
       );
     }
 
     try {
-      await this.forwardToUpstream(req, res, target, namespace, version);
+      await this.forwardToUpstream(
+        req,
+        res,
+        resolvedRoute.target,
+        namespace,
+        version,
+        resolvedRoute.keepVersionPrefix,
+      );
     } catch (error) {
       this.writeUpstreamProblem(error, req.originalUrl || req.url, res);
     }
@@ -65,8 +93,11 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     path: string,
     namespace: string,
     version: string,
+    keepVersionPrefix: boolean,
   ): string {
-    const prefix = `/${namespace}/${version}`;
+    const prefix = keepVersionPrefix
+      ? `/${namespace}`
+      : `/${namespace}/${version}`;
     const rewritten = path.startsWith(prefix)
       ? path.slice(prefix.length)
       : path;
@@ -143,11 +174,13 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     target: string,
     namespace: string,
     version: string,
+    keepVersionPrefix: boolean,
   ): Promise<void> {
     const rewrittenPath = this.rewritePath(
       req.originalUrl || req.url,
       namespace,
       version,
+      keepVersionPrefix,
     );
     const upstreamUrl = new URL(rewrittenPath, target).toString();
     const body = await this.readRequestBody(req);

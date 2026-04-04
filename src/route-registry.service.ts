@@ -2,7 +2,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Cache } from 'cache-manager';
-import type { RouteMap } from './gateway.types';
+import type { ResolvedRoute, RouteMap } from './gateway.types';
 
 @Injectable()
 export class RouteRegistryService {
@@ -14,20 +14,38 @@ export class RouteRegistryService {
   async getTarget(
     namespace: string,
     version: string,
-  ): Promise<string | undefined> {
+  ): Promise<ResolvedRoute | undefined> {
     const cacheKey = `route:${namespace}:${version}`;
-    const cached = await this.cacheManager.get<string>(cacheKey);
+    const cached = await this.cacheManager.get<ResolvedRoute>(cacheKey);
     if (cached) {
       return cached;
     }
 
     const routeMap = this.configService.get<RouteMap>('gateway.routeMap');
-    const target = routeMap?.[namespace]?.[version];
-
-    if (target) {
-      await this.cacheManager.set(cacheKey, target, 60_000);
+    const namespaceEntry = routeMap?.[namespace];
+    if (!namespaceEntry) {
+      return undefined;
     }
 
-    return target;
+    const resolved =
+      typeof namespaceEntry === 'string'
+        ? { target: namespaceEntry, keepVersionPrefix: true }
+        : (() => {
+            const target = namespaceEntry[version];
+            if (!target) {
+              return undefined;
+            }
+
+            return {
+              target,
+              keepVersionPrefix: false,
+            } satisfies ResolvedRoute;
+          })();
+
+    if (resolved) {
+      await this.cacheManager.set(cacheKey, resolved, 60_000);
+    }
+
+    return resolved;
   }
 }

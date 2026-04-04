@@ -13,11 +13,16 @@ function normalizeRouteMap(value: unknown): RouteMap {
   const normalized: RouteMap = {};
 
   for (const [namespace, routeValue] of Object.entries(value)) {
+    if (typeof routeValue === 'string') {
+      normalized[namespace] = routeValue;
+      continue;
+    }
+
     if (!isRecord(routeValue)) {
       throw new Error(`ROUTE_MAP namespace "${namespace}" must be an object`);
     }
 
-    normalized[namespace] = {};
+    const versionMap: Record<string, string> = {};
     for (const [version, target] of Object.entries(routeValue)) {
       if (typeof target !== 'string') {
         throw new Error(
@@ -25,8 +30,10 @@ function normalizeRouteMap(value: unknown): RouteMap {
         );
       }
 
-      normalized[namespace][version] = target;
+      versionMap[version] = target;
     }
+
+    normalized[namespace] = versionMap;
   }
 
   return normalized;
@@ -39,9 +46,7 @@ function parseRouteMap(raw?: string): RouteMap {
         v1: 'http://localhost:4001',
         v2: 'http://localhost:4003',
       },
-      billing: {
-        v1: 'http://localhost:4002',
-      },
+      billing: 'http://localhost:4002',
     };
   }
 

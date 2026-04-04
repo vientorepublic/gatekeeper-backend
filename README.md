@@ -28,11 +28,12 @@ NestJS 기반 API Gateway 서버입니다.
     "v1": "http://localhost:4001",
     "v2": "http://localhost:4003"
   },
-  "billing": {
-    "v1": "http://localhost:4002"
-  }
+  "billing": "http://localhost:4002"
 }
 ```
+
+- 버전 맵을 정의한 경우: `/namespace/version/...`에서 `/{namespace}/{version}`가 제거되어 전달됩니다.
+- 버전을 생략한 경우(문자열 대상): `/namespace/version/...`에서 `/{namespace}`만 제거되어 `/{version}/...` 경로가 업스트림으로 전달됩니다.
 
 ## 실행
 
