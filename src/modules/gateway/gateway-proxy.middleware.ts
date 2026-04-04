@@ -8,33 +8,14 @@ import { STATUS_CODES } from 'node:http';
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { RouteRegistryService } from './route-registry.service';
-
-interface ProxyErrorShape {
-  code?: string;
-}
-
-interface RouteKey {
-  namespace: string;
-  version: string;
-}
-
-function isResolvedRoute(
-  value: unknown,
-): value is { target: string; keepVersionPrefix: boolean } {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-
-  const candidate = value as {
-    target?: unknown;
-    keepVersionPrefix?: unknown;
-  };
-
-  return (
-    typeof candidate.target === 'string' &&
-    typeof candidate.keepVersionPrefix === 'boolean'
-  );
-}
+import {
+  buildUpstreamHeaders,
+  extractRouteKey,
+  getProxyErrorCode,
+  isResolvedRoute,
+  readRequestBody,
+  rewritePath,
+} from './gateway-proxy.utils';
 
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
@@ -46,7 +27,14 @@ export class GatewayProxyMiddleware implements NestMiddleware {
   async use(req: Request, res: Response, _next: NextFunction): Promise<void> {
     void _next;
 
-    const { namespace, version } = this.extractRouteKey(req.path);
+    const routeKey = extractRouteKey(req.path);
+    if (!routeKey) {
+      throw new NotFoundException(
+        'Path must follow /{namespace}/{version}/...',
+      );
+    }
+
+    const { namespace, version } = routeKey;
 
     if (!req.headers.authorization?.startsWith('Bearer ')) {
       throw new UnauthorizedException('Missing bearer token');
@@ -76,96 +64,12 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     }
   }
 
-  private extractRouteKey(path: string): RouteKey {
-    const parts = path.split('/').filter(Boolean);
-    const [namespace, version] = parts;
-
-    if (!namespace || !version) {
-      throw new NotFoundException(
-        'Path must follow /{namespace}/{version}/...',
-      );
-    }
-
-    return { namespace, version };
-  }
-
-  private rewritePath(
-    path: string,
-    namespace: string,
-    version: string,
-    keepVersionPrefix: boolean,
-  ): string {
-    const prefix = keepVersionPrefix
-      ? `/${namespace}`
-      : `/${namespace}/${version}`;
-    const rewritten = path.startsWith(prefix)
-      ? path.slice(prefix.length)
-      : path;
-    return rewritten || '/';
-  }
-
   private getOAuth2IssuerHint(): string | undefined {
     const issuer = this.configService.get<string>('gateway.oauth2Issuer', {
       infer: true,
     });
 
     return issuer || undefined;
-  }
-
-  private async readRequestBody(req: Request): Promise<Buffer | undefined> {
-    const method = req.method.toUpperCase();
-    if (method === 'GET' || method === 'HEAD') {
-      return undefined;
-    }
-
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      if (typeof chunk === 'string') {
-        chunks.push(Buffer.from(chunk));
-        continue;
-      }
-
-      if (Buffer.isBuffer(chunk)) {
-        chunks.push(chunk);
-        continue;
-      }
-
-      if (chunk instanceof Uint8Array) {
-        chunks.push(Buffer.from(chunk));
-      }
-    }
-
-    if (chunks.length === 0) {
-      return undefined;
-    }
-
-    return Buffer.concat(chunks);
-  }
-
-  private buildUpstreamHeaders(req: Request): Headers {
-    const headers = new Headers();
-
-    for (const [name, value] of Object.entries(req.headers)) {
-      if (typeof value === 'undefined') {
-        continue;
-      }
-
-      if (Array.isArray(value)) {
-        headers.set(name, value.join(','));
-      } else {
-        headers.set(name, value);
-      }
-    }
-
-    headers.delete('host');
-    headers.delete('content-length');
-
-    const issuerHint = this.getOAuth2IssuerHint();
-    if (issuerHint) {
-      headers.set('x-oauth2-issuer-hint', issuerHint);
-    }
-
-    return headers;
   }
 
   private async forwardToUpstream(
@@ -176,18 +80,18 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     version: string,
     keepVersionPrefix: boolean,
   ): Promise<void> {
-    const rewrittenPath = this.rewritePath(
+    const rewrittenPath = rewritePath(
       req.originalUrl || req.url,
       namespace,
       version,
       keepVersionPrefix,
     );
     const upstreamUrl = new URL(rewrittenPath, target).toString();
-    const body = await this.readRequestBody(req);
+    const body = await readRequestBody(req);
 
     const upstreamResponse = await fetch(upstreamUrl, {
       method: req.method,
-      headers: this.buildUpstreamHeaders(req),
+      headers: buildUpstreamHeaders(req, this.getOAuth2IssuerHint()),
       body: body ? new Uint8Array(body) : undefined,
       redirect: 'manual',
     });
@@ -220,8 +124,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       return;
     }
 
-    const proxyError = error as ProxyErrorShape;
-    const errorCode = proxyError.code ?? 'UPSTREAM_UNAVAILABLE';
+    const errorCode = getProxyErrorCode(error);
     const instance = requestUrl && requestUrl.length > 0 ? requestUrl : '/';
     const title = STATUS_CODES[502] ?? 'Bad Gateway';
     const body = JSON.stringify({

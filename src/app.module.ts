@@ -1,13 +1,13 @@
 import { CacheModule } from '@nestjs/cache-manager';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { GatewayController } from './gateway.controller';
-import gatewayConfig from './gateway.config';
-import { GatewayProxyMiddleware } from './gateway-proxy.middleware';
-import { HealthController } from './health.controller';
-import { IdentityService } from './identity.service';
-import { JwtAuthGuard } from './jwt-auth.guard';
-import { RouteRegistryService } from './route-registry.service';
+import gatewayConfig from './config/gateway.config';
+import { GatewayController } from './modules/gateway/gateway.controller';
+import { GatewayProxyMiddleware } from './modules/gateway/gateway-proxy.middleware';
+import { HealthController } from './modules/health/health.controller';
+import { IdentityService } from './modules/auth/identity.service';
+import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
+import { RouteRegistryService } from './modules/gateway/route-registry.service';
 import { redisStore } from 'cache-manager-redis-store';
 
 @Module({

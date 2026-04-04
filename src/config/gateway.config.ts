@@ -1,5 +1,5 @@
 import { registerAs } from '@nestjs/config';
-import type { RouteMap } from './gateway.types';
+import type { RouteMap } from '../common/types/gateway.types';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;

@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { GatewayUserIdentity, JwtClaims } from './gateway.types';
+import type {
+  GatewayUserIdentity,
+  JwtClaims,
+} from '../../common/types/gateway.types';
 
 @Injectable()
 export class IdentityService {

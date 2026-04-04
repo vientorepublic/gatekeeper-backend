@@ -2,7 +2,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Cache } from 'cache-manager';
-import type { ResolvedRoute, RouteMap } from './gateway.types';
+import type { ResolvedRoute, RouteMap } from '../../common/types/gateway.types';
 
 @Injectable()
 export class RouteRegistryService {

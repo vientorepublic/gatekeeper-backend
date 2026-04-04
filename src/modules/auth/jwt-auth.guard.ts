@@ -7,7 +7,7 @@ import {
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { IdentityService } from './identity.service';
-import type { JwtClaims } from './gateway.types';
+import type { JwtClaims } from '../../common/types/gateway.types';
 
 function isJwtClaims(value: unknown): value is JwtClaims {
   return typeof value === 'object' && value !== null;
