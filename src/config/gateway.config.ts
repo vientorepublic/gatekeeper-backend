@@ -95,6 +95,17 @@ function parseScopes(raw: string | undefined): string[] {
     .filter((scope) => scope.length > 0);
 }
 
+function parseCsv(raw: string | undefined, fallback: string[]): string[] {
+  if (!raw || raw.trim().length === 0) {
+    return fallback;
+  }
+
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 export default registerAs('gateway', () => ({
   jwtSecret: process.env.JWT_HMAC_SECRET ?? 'change-me-in-production',
   jwtExpiresInSeconds: parseNumber(process.env.JWT_EXPIRES_IN_SECONDS, 3600),
@@ -110,6 +121,7 @@ export default registerAs('gateway', () => ({
     scopes: parseScopes(process.env.OAUTH2_SCOPES),
     defaultScope: process.env.OAUTH2_SCOPES ?? 'openid,profile',
   },
+  corsOrigins: parseCsv(process.env.CORS_ORIGINS, ['http://localhost:5173']),
   database: {
     host: process.env.DB_HOST ?? '127.0.0.1',
     port: parseNumber(process.env.DB_PORT, 3306),

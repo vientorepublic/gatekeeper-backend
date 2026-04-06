@@ -6,9 +6,12 @@ describe('RouteRegistryService', () => {
     const store = new Map<string, unknown>();
 
     return {
-      get: jest.fn(async <T>(key: string) => store.get(key) as T | undefined),
-      set: jest.fn(async (key: string, value: unknown) => {
+      get: jest.fn(<T>(key: string) =>
+        Promise.resolve(store.get(key) as T | undefined),
+      ),
+      set: jest.fn((key: string, value: unknown) => {
         store.set(key, value);
+        return Promise.resolve();
       }),
     };
   };
@@ -64,10 +67,12 @@ describe('RouteRegistryService', () => {
 
   it('returns cached target when exists', async () => {
     const cache = {
-      get: jest.fn(async () => ({
-        target: 'http://cached.internal',
-        keepVersionPrefix: true,
-      })),
+      get: jest.fn(() =>
+        Promise.resolve({
+          target: 'http://cached.internal',
+          keepVersionPrefix: true,
+        }),
+      ),
       set: jest.fn(),
     };
 

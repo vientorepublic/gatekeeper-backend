@@ -16,9 +16,11 @@ import { RouteRegistryService } from '../src/modules/gateway/route-registry.serv
 const cacheStore = new Map<string, unknown>();
 
 const cacheManagerMock = {
-  get: async <T>(key: string) => cacheStore.get(key) as T | undefined,
-  set: async (key: string, value: unknown) => {
+  get: <T>(key: string) =>
+    Promise.resolve(cacheStore.get(key) as T | undefined),
+  set: (key: string, value: unknown) => {
     cacheStore.set(key, value);
+    return Promise.resolve();
   },
 };
 
@@ -85,13 +87,15 @@ describe('Gateway proxy e2e', () => {
 
   beforeEach(() => {
     cacheStore.clear();
-    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async () => {
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: {
-          'content-type': 'application/json',
-        },
-      });
+    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(() => {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        }),
+      );
     });
   });
 
@@ -104,7 +108,9 @@ describe('Gateway proxy e2e', () => {
   });
 
   it('forwards versioned namespace path tail correctly', async () => {
-    await request(app.getHttpServer())
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
       .get('/gateway/hashguard/v1/health?deep=true')
       .expect(200);
 
@@ -115,9 +121,9 @@ describe('Gateway proxy e2e', () => {
   });
 
   it('keeps version prefix for direct namespace route target', async () => {
-    await request(app.getHttpServer())
-      .get('/gateway/billing/v1/health')
-      .expect(200);
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server).get('/gateway/billing/v1/health').expect(200);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0]?.[0]).toBe(

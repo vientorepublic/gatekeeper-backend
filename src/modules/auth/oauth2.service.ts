@@ -89,6 +89,24 @@ export class Oauth2Service {
     };
   }
 
+  async createSessionFromAccessToken(
+    accessToken: string,
+    scope?: string,
+  ): Promise<{ accessToken: string; user: UserEntity }> {
+    const client = this.createClient();
+    const profile = await this.fetchProfile(client, {
+      access_token: accessToken,
+      scope,
+    });
+    const user = await this.usersService.upsertOAuth2User('flowauth', profile);
+    const jwt = this.issueGatewayToken(user, scope);
+
+    return {
+      accessToken: jwt,
+      user,
+    };
+  }
+
   private async fetchProfile(
     client: FlowAuthClient,
     tokens: TokenPayload,

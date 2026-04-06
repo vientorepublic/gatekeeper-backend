@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -16,9 +17,16 @@ import { ApiKeysService } from './api-keys.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Oauth2Service } from './oauth2.service';
 import type { GatewayUserIdentity } from '../../common/types/gateway.types';
+import { ConfigService } from '@nestjs/config';
+import type { RouteMap } from '../../common/types/gateway.types';
 
 interface ApiKeyRequestBody {
   label?: string;
+}
+
+interface OAuth2SessionRequestBody {
+  accessToken?: string;
+  scope?: string;
 }
 
 @Controller('auth')
@@ -26,7 +34,23 @@ export class AuthController {
   constructor(
     private readonly oauth2Service: Oauth2Service,
     private readonly apiKeysService: ApiKeysService,
+    private readonly configService: ConfigService,
   ) {}
+
+  @Get('namespaces')
+  getNamespaces(): { namespaces: string[] } {
+    const routeMap = this.configService.get<RouteMap>('gateway.routeMap', {
+      infer: true,
+    });
+
+    if (!routeMap) {
+      throw new ConflictException('ROUTE_MAP is not configured');
+    }
+
+    return {
+      namespaces: Object.keys(routeMap),
+    };
+  }
 
   @Get('oauth2/authorize')
   async getAuthorizeUrl(): Promise<{ authorizeUrl: string; state: string }> {
@@ -60,6 +84,40 @@ export class AuthController {
     const result = await this.oauth2Service.completeAuthorizationCodeGrant(
       code,
       state,
+    );
+
+    return {
+      accessToken: result.accessToken,
+      tokenType: 'Bearer',
+      user: {
+        id: result.user.id,
+        provider: result.user.provider,
+        subject: result.user.subject,
+        email: result.user.email,
+        name: result.user.name,
+      },
+    };
+  }
+
+  @Post('oauth2/session')
+  async createOAuth2Session(@Body() body: OAuth2SessionRequestBody): Promise<{
+    accessToken: string;
+    tokenType: 'Bearer';
+    user: {
+      id: string;
+      provider: string;
+      subject: string;
+      email: string | null;
+      name: string | null;
+    };
+  }> {
+    if (!body.accessToken || body.accessToken.length === 0) {
+      throw new BadRequestException('accessToken is required');
+    }
+
+    const result = await this.oauth2Service.createSessionFromAccessToken(
+      body.accessToken,
+      body.scope,
     );
 
     return {

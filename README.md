@@ -28,6 +28,7 @@ NestJS 기반 API Gateway 서버입니다.
 - `DB_LOGGING`: SQL 로깅 여부
 - `ROUTE_MAP`: 업스트림 매핑 JSON (`/gateway/{namespace}/{version}`에 매핑)
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
+- `CORS_ORIGINS`: 허용할 브라우저 오리진 목록 (콤마 구분)
 - `OAUTH2_SERVER`: FlowAuth 서버 URL
 - `OAUTH2_CLIENT_ID`: OAuth2 클라이언트 ID
 - `OAUTH2_CLIENT_SECRET`: OAuth2 클라이언트 시크릿
@@ -82,6 +83,8 @@ npm run start:dev
 - 프록시 요청: `GET /gateway/orders/v1/customers/42`
 - OAuth2 인증 시작: `GET /auth/oauth2/authorize`
 - OAuth2 콜백 처리: `GET /auth/oauth2/callback?code=...&state=...`
+- OAuth2 Access Token으로 세션 생성: `POST /auth/oauth2/session`
+- 관리 가능한 namespace 조회: `GET /auth/namespaces`
 - API Key 조회(인증 필요): `GET /auth/api-keys/:namespace`
 - API Key 발급(인증 필요): `POST /auth/api-keys/:namespace`
 - API Key 폐기(인증 필요): `DELETE /auth/api-keys/:namespace/:id`

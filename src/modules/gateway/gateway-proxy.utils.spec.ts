@@ -29,7 +29,7 @@ describe('gateway-proxy.utils', () => {
     it('returns undefined for GET requests', async () => {
       const req = {
         method: 'GET',
-        async *[Symbol.asyncIterator]() {
+        *[Symbol.asyncIterator]() {
           yield Buffer.from('ignored');
         },
       };
@@ -40,7 +40,7 @@ describe('gateway-proxy.utils', () => {
     it('concatenates body chunks for non-GET requests', async () => {
       const req = {
         method: 'POST',
-        async *[Symbol.asyncIterator]() {
+        *[Symbol.asyncIterator]() {
           yield Buffer.from('hello');
           yield Buffer.from(' ');
           yield new Uint8Array(Buffer.from('world'));
