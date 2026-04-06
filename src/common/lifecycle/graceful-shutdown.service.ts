@@ -30,7 +30,9 @@ export class GracefulShutdownService implements OnApplicationShutdown {
   ) {}
 
   async onApplicationShutdown(signal?: string): Promise<void> {
-    this.logger.log(`Shutdown started (signal: ${signal ?? 'unknown'})`);
+    this.logger.log(
+      `Received ${signal ?? 'shutdown signal'}. Starting graceful shutdown...`,
+    );
 
     await this.closeDatabaseConnection();
     await this.closeCacheStores();
