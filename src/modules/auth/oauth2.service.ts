@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Injectable,
   UnauthorizedException,
@@ -65,18 +66,19 @@ export class Oauth2Service {
       throw new BadRequestException('Invalid OAuth2 state');
     }
 
-    await this.cacheManager.del(this.getStateCacheKey(state));
-
     const client = this.createClient();
 
-    const tokens = (await client.exchangeCode(
+    const tokens = await this.exchangeCodeForTokens(
+      client,
       code,
       statePayload.codeVerifier,
-    )) as TokenPayload;
+    );
 
     if (!tokens.access_token) {
       throw new UnauthorizedException('OAuth2 token exchange failed');
     }
+
+    await this.cacheManager.del(this.getStateCacheKey(state));
 
     const profile = await this.fetchProfile(client, tokens);
     const user = await this.usersService.upsertOAuth2User('flowauth', profile);
@@ -111,10 +113,19 @@ export class Oauth2Service {
     client: FlowAuthClient,
     tokens: TokenPayload,
   ): Promise<OAuth2UserProfile> {
-    const userInfo = (await client.getUserInfo(tokens.access_token)) as Record<
-      string,
-      unknown
-    >;
+    let userInfo: Record<string, unknown>;
+
+    try {
+      userInfo = (await client.getUserInfo(tokens.access_token)) as Record<
+        string,
+        unknown
+      >;
+    } catch (error) {
+      const reason = this.getErrorMessage(error);
+      throw new BadGatewayException(
+        `OAuth2 userinfo request failed: ${reason}`,
+      );
+    }
 
     const subject = this.extractString(userInfo, ['sub', 'id', 'user_id']);
     if (!subject) {
@@ -131,6 +142,19 @@ export class Oauth2Service {
       ]),
       rawProfile: userInfo,
     };
+  }
+
+  private async exchangeCodeForTokens(
+    client: FlowAuthClient,
+    code: string,
+    codeVerifier: string,
+  ): Promise<TokenPayload> {
+    try {
+      return (await client.exchangeCode(code, codeVerifier)) as TokenPayload;
+    } catch (error) {
+      const reason = this.getErrorMessage(error);
+      throw new BadGatewayException(`OAuth2 token exchange failed: ${reason}`);
+    }
   }
 
   private issueGatewayToken(user: UserEntity, scopeClaim?: unknown): string {
@@ -249,5 +273,17 @@ export class Oauth2Service {
     }
 
     return undefined;
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+
+    if (typeof error === 'string') {
+      return error;
+    }
+
+    return 'Unknown error';
   }
 }

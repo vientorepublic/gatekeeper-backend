@@ -1,7 +1,13 @@
-import { Injectable, NestMiddleware, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NestMiddleware,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
+import { ApiKeysService } from '../auth/api-keys.service';
 import { RouteRegistryService } from './route-registry.service';
 import {
   buildUpstreamHeaders,
@@ -24,6 +30,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
   constructor(
     private readonly routeRegistry: RouteRegistryService,
     private readonly configService: ConfigService,
+    private readonly apiKeysService: ApiKeysService,
   ) {}
 
   async use(req: Request, res: Response, _next: NextFunction): Promise<void> {
@@ -37,6 +44,8 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     }
 
     const { namespace, version } = proxyPath;
+
+    await this.assertGatewayAuthorization(req, namespace);
 
     const resolvedRoute = await this.routeRegistry.getTarget(
       namespace,
@@ -60,6 +69,25 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     } catch (error) {
       this.writeUpstreamProblem(error, req.originalUrl || req.url, res);
     }
+  }
+
+  private async assertGatewayAuthorization(
+    req: Request,
+    namespace: string,
+  ): Promise<void> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      throw new UnauthorizedException(
+        'Missing bearer token. Use Bearer API key for use REST API requests.',
+      );
+    }
+
+    const rawApiKey = authHeader.replace('Bearer ', '').trim();
+    if (rawApiKey.length === 0) {
+      throw new UnauthorizedException('Bearer token is empty');
+    }
+
+    await this.apiKeysService.authenticateApiKey(rawApiKey, namespace);
   }
 
   private getOAuth2IssuerHint(): string | undefined {

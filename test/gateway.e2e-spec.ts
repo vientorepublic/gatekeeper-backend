@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { ApiKeysService } from '../src/modules/auth/api-keys.service';
 import { GatewayProxyMiddleware } from '../src/modules/gateway/gateway-proxy.middleware';
 import { RouteRegistryService } from '../src/modules/gateway/route-registry.service';
 
@@ -43,6 +44,15 @@ const configServiceMock = {
   },
 };
 
+const apiKeysServiceMock = {
+  authenticateApiKey: jest.fn().mockResolvedValue({
+    id: 'user-1',
+    subject: 'subject-1',
+    provider: 'flowauth',
+    email: 'test@example.com',
+  }),
+};
+
 @Controller('gateway/:namespace/:version')
 class TestGatewayController {
   @All('*path')
@@ -63,6 +73,10 @@ class TestGatewayController {
     {
       provide: CACHE_MANAGER,
       useValue: cacheManagerMock,
+    },
+    {
+      provide: ApiKeysService,
+      useValue: apiKeysServiceMock,
     },
   ],
 })
@@ -87,6 +101,7 @@ describe('Gateway proxy e2e', () => {
 
   beforeEach(() => {
     cacheStore.clear();
+    apiKeysServiceMock.authenticateApiKey.mockClear();
     fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(() => {
       return Promise.resolve(
         new Response(JSON.stringify({ ok: true }), {
@@ -112,8 +127,13 @@ describe('Gateway proxy e2e', () => {
 
     await request(server)
       .get('/gateway/hashguard/v1/health?deep=true')
+      .set('authorization', 'Bearer gk_test_key')
       .expect(200);
 
+    expect(apiKeysServiceMock.authenticateApiKey).toHaveBeenCalledWith(
+      'gk_test_key',
+      'hashguard',
+    );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0]?.[0]).toBe(
       'http://hashguard.internal/health?deep=true',
@@ -123,11 +143,27 @@ describe('Gateway proxy e2e', () => {
   it('keeps version prefix for direct namespace route target', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
-    await request(server).get('/gateway/billing/v1/health').expect(200);
+    await request(server)
+      .get('/gateway/billing/v1/health')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(200);
 
+    expect(apiKeysServiceMock.authenticateApiKey).toHaveBeenCalledWith(
+      'gk_test_key',
+      'billing',
+    );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0]?.[0]).toBe(
       'http://billing.internal/v1/health',
     );
+  });
+
+  it('rejects forwarding when authorization header is missing', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server).get('/gateway/hashguard/v1/health').expect(401);
+
+    expect(apiKeysServiceMock.authenticateApiKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

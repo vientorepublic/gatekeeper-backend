@@ -1,6 +1,8 @@
 import { CacheModule } from '@nestjs/cache-manager';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import Keyv from 'keyv';
+import KeyvRedis from '@keyv/redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import gatewayConfig from './config/gateway.config';
 import { GatewayController } from './modules/gateway/gateway.controller';
@@ -15,7 +17,6 @@ import { ApiKeysService } from './modules/auth/api-keys.service';
 import { UserEntity } from './modules/auth/entities/user.entity';
 import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
 import { RouteRegistryService } from './modules/gateway/route-registry.service';
-import { redisStore } from 'cache-manager-redis-store';
 
 @Module({
   imports: [
@@ -92,10 +93,23 @@ import { redisStore } from 'cache-manager-redis-store';
           };
         }
 
+        const redisKeyvStore = new KeyvRedis(redisUrl);
+        const redisKeyv = new Keyv({
+          store: redisKeyvStore,
+          namespace: 'gatekeeper',
+        });
+
+        // Fail fast when REDIS_URL is configured but cache backend is unreachable.
+        const probeKey = '__gatekeeper:redis:probe__';
+        await redisKeyv.set(probeKey, 'ok', 3_000);
+        const probeValue = await redisKeyv.get<string>(probeKey);
+        if (probeValue !== 'ok') {
+          throw new Error('Redis cache probe failed');
+        }
+        await redisKeyv.delete(probeKey);
+
         return {
-          store: await redisStore({
-            url: redisUrl,
-          }),
+          stores: [redisKeyv],
           ttl: 60_000,
         };
       },

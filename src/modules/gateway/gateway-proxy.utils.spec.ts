@@ -53,11 +53,12 @@ describe('gateway-proxy.utils', () => {
   });
 
   describe('buildUpstreamHeaders', () => {
-    it('copies headers and removes host/content-length', () => {
+    it('copies headers and removes sensitive forwarding headers', () => {
       const req = {
         headers: {
           host: 'localhost:3000',
           authorization: 'Bearer token',
+          'x-api-key': 'gk_example',
           'content-length': '12',
           accept: ['application/json', 'text/plain'],
         },
@@ -70,7 +71,8 @@ describe('gateway-proxy.utils', () => {
 
       expect(headers.get('host')).toBeNull();
       expect(headers.get('content-length')).toBeNull();
-      expect(headers.get('authorization')).toBe('Bearer token');
+      expect(headers.get('authorization')).toBeNull();
+      expect(headers.get('x-api-key')).toBeNull();
       expect(headers.get('accept')).toBe('application/json,text/plain');
       expect(headers.get('x-oauth2-issuer-hint')).toBe(
         'https://issuer.example',

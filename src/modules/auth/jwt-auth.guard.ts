@@ -29,8 +29,44 @@ export class JwtAuthGuard implements CanActivate {
       user?: unknown;
     }>();
 
-    const apiKey = request.headers['x-api-key'];
     const namespace = request.params?.namespace;
+    const version = request.params?.version;
+    const isGatewayProxyRequest =
+      typeof namespace === 'string' &&
+      namespace.length > 0 &&
+      typeof version === 'string' &&
+      version.length > 0;
+
+    if (isGatewayProxyRequest) {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        throw new UnauthorizedException(
+          'Missing bearer token. Use Bearer API key for use REST API requests.',
+        );
+      }
+
+      const rawApiKey = authHeader.replace('Bearer ', '').trim();
+      if (!rawApiKey) {
+        throw new UnauthorizedException('Bearer token is empty');
+      }
+
+      const apiKeyUser = await this.apiKeysService.authenticateApiKey(
+        rawApiKey,
+        namespace,
+      );
+
+      request.user = {
+        userId: apiKeyUser.id,
+        subject: apiKeyUser.subject,
+        provider: apiKeyUser.provider,
+        scopes: [],
+        email: apiKeyUser.email,
+      };
+
+      return true;
+    }
+
+    const apiKey = request.headers['x-api-key'];
     if (apiKey && apiKey.length > 0) {
       const apiKeyUser = await this.apiKeysService.authenticateApiKey(
         apiKey,

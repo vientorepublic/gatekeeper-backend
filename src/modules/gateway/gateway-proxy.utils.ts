@@ -99,6 +99,8 @@ export function buildUpstreamHeaders(
 
   headers.delete('host');
   headers.delete('content-length');
+  headers.delete('authorization');
+  headers.delete('x-api-key');
 
   if (issuerHint) {
     headers.set('x-oauth2-issuer-hint', issuerHint);
