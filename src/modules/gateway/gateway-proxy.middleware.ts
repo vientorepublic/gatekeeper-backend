@@ -1,21 +1,19 @@
-import {
-  Injectable,
-  NestMiddleware,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, NestMiddleware, NotFoundException } from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { RouteRegistryService } from './route-registry.service';
 import {
   buildUpstreamHeaders,
-  extractRouteKey,
   getProxyErrorCode,
   isResolvedRoute,
   readRequestBody,
-  rewritePath,
 } from './gateway-proxy.utils';
+
+interface ResolvedRequestRoute {
+  namespace: string;
+  version: string;
+}
 
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
@@ -27,18 +25,14 @@ export class GatewayProxyMiddleware implements NestMiddleware {
   async use(req: Request, res: Response, _next: NextFunction): Promise<void> {
     void _next;
 
-    const routeKey = extractRouteKey(req.path);
+    const routeKey = this.resolveRoute(req);
     if (!routeKey) {
       throw new NotFoundException(
-        'Path must follow /{namespace}/{version}/...',
+        'Path must follow /gateway/{namespace}/{version}/...',
       );
     }
 
     const { namespace, version } = routeKey;
-
-    if (!req.headers.authorization?.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing bearer token');
-    }
 
     const resolvedRoute = await this.routeRegistry.getTarget(
       namespace,
@@ -55,7 +49,6 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         req,
         res,
         resolvedRoute.target,
-        namespace,
         version,
         resolvedRoute.keepVersionPrefix,
       );
@@ -76,13 +69,11 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     req: Request,
     res: Response,
     target: string,
-    namespace: string,
     version: string,
     keepVersionPrefix: boolean,
   ): Promise<void> {
-    const rewrittenPath = rewritePath(
-      req.originalUrl || req.url,
-      namespace,
+    const rewrittenPath = this.buildUpstreamPath(
+      req,
       version,
       keepVersionPrefix,
     );
@@ -141,5 +132,43 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       'application/problem+json; charset=utf-8',
     );
     response.end(body);
+  }
+
+  private resolveRoute(req: Request): ResolvedRequestRoute | undefined {
+    const namespace = req.params.namespace;
+    const version = req.params.version;
+
+    if (typeof namespace !== 'string' || typeof version !== 'string') {
+      return undefined;
+    }
+
+    if (namespace.length === 0 || version.length === 0) {
+      return undefined;
+    }
+
+    return {
+      namespace,
+      version,
+    };
+  }
+
+  private buildUpstreamPath(
+    req: Request,
+    version: string,
+    keepVersionPrefix: boolean,
+  ): string {
+    const tailParam = req.params.path;
+    const tail =
+      typeof tailParam === 'string' && tailParam.length > 0
+        ? `/${tailParam}`
+        : '';
+
+    const basePath = keepVersionPrefix ? `/${version}${tail}` : tail || '/';
+
+    const originalUrl = req.originalUrl || req.url;
+    const queryIndex = originalUrl.indexOf('?');
+    const queryString = queryIndex >= 0 ? originalUrl.slice(queryIndex) : '';
+
+    return `${basePath}${queryString}`;
   }
 }

@@ -8,13 +8,18 @@ export interface ResolvedRoute {
 }
 
 export interface GatewayUserIdentity {
+  userId?: string;
   subject: string;
-  provider: 'mock' | 'oauth2';
+  provider: string;
   scopes: string[];
+  email?: string | null;
 }
 
 export interface JwtClaims {
+  uid?: string;
   sub?: string;
+  provider?: string;
+  email?: string;
   scope?: string;
   [key: string]: unknown;
 }

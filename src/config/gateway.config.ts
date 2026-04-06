@@ -58,10 +58,66 @@ function parseRouteMap(raw?: string): RouteMap {
   }
 }
 
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+
+  return fallback;
+}
+
+function parseNumber(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseScopes(raw: string | undefined): string[] {
+  if (!raw || raw.trim().length === 0) {
+    return ['openid', 'profile'];
+  }
+
+  return raw
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
+}
+
 export default registerAs('gateway', () => ({
   jwtSecret: process.env.JWT_HMAC_SECRET ?? 'change-me-in-production',
+  jwtExpiresInSeconds: parseNumber(process.env.JWT_EXPIRES_IN_SECONDS, 3600),
   routeMap: parseRouteMap(process.env.ROUTE_MAP),
   redisUrl: process.env.REDIS_URL,
   oauth2Issuer: process.env.OAUTH2_ISSUER ?? '',
   oauth2Audience: process.env.OAUTH2_AUDIENCE ?? '',
+  oauth2: {
+    server: process.env.OAUTH2_SERVER ?? '',
+    clientId: process.env.OAUTH2_CLIENT_ID ?? '',
+    clientSecret: process.env.OAUTH2_CLIENT_SECRET ?? '',
+    redirectUri: process.env.OAUTH2_REDIRECT_URI ?? '',
+    scopes: parseScopes(process.env.OAUTH2_SCOPES),
+    defaultScope: process.env.OAUTH2_SCOPES ?? 'openid,profile',
+  },
+  database: {
+    host: process.env.DB_HOST ?? '127.0.0.1',
+    port: parseNumber(process.env.DB_PORT, 3306),
+    username: process.env.DB_USERNAME ?? 'gatekeeper',
+    password: process.env.DB_PASSWORD ?? '',
+    database: process.env.DB_NAME ?? 'gatekeeper',
+    charset: process.env.DB_CHARSET ?? 'utf8mb4',
+    synchronize: parseBoolean(process.env.DB_SYNCHRONIZE, true),
+    logging: parseBoolean(process.env.DB_LOGGING, false),
+  },
 }));

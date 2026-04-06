@@ -1,7 +1,7 @@
 import { All, Controller, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
-@Controller(':namespace/:version')
+@Controller('gateway/:namespace/:version')
 @UseGuards(JwtAuthGuard)
 export class GatewayController {
   // Actual forwarding is handled by GatewayProxyMiddleware.
