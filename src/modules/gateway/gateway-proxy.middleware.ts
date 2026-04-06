@@ -15,6 +15,10 @@ interface ResolvedRequestRoute {
   version: string;
 }
 
+interface ProxyPathParts extends ResolvedRequestRoute {
+  tailPath: string;
+}
+
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
   constructor(
@@ -25,14 +29,14 @@ export class GatewayProxyMiddleware implements NestMiddleware {
   async use(req: Request, res: Response, _next: NextFunction): Promise<void> {
     void _next;
 
-    const routeKey = this.resolveRoute(req);
-    if (!routeKey) {
+    const proxyPath = this.parseProxyPath(req);
+    if (!proxyPath) {
       throw new NotFoundException(
         'Path must follow /gateway/{namespace}/{version}/...',
       );
     }
 
-    const { namespace, version } = routeKey;
+    const { namespace, version } = proxyPath;
 
     const resolvedRoute = await this.routeRegistry.getTarget(
       namespace,
@@ -50,6 +54,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         res,
         resolvedRoute.target,
         version,
+        proxyPath.tailPath,
         resolvedRoute.keepVersionPrefix,
       );
     } catch (error) {
@@ -70,11 +75,13 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     res: Response,
     target: string,
     version: string,
+    tailPath: string,
     keepVersionPrefix: boolean,
   ): Promise<void> {
     const rewrittenPath = this.buildUpstreamPath(
       req,
       version,
+      tailPath,
       keepVersionPrefix,
     );
     const upstreamUrl = new URL(rewrittenPath, target).toString();
@@ -134,34 +141,40 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     response.end(body);
   }
 
-  private resolveRoute(req: Request): ResolvedRequestRoute | undefined {
-    const namespace = req.params.namespace;
-    const version = req.params.version;
+  private parseProxyPath(req: Request): ProxyPathParts | undefined {
+    const originalUrl = req.originalUrl || req.url;
+    const queryIndex = originalUrl.indexOf('?');
+    const pathname =
+      queryIndex >= 0 ? originalUrl.slice(0, queryIndex) : originalUrl;
+    const parts = pathname.split('/').filter(Boolean);
 
-    if (typeof namespace !== 'string' || typeof version !== 'string') {
+    if (parts[0] !== 'gateway') {
       return undefined;
     }
 
-    if (namespace.length === 0 || version.length === 0) {
+    const namespace = parts[1];
+    const version = parts[2];
+
+    if (!namespace || !version) {
       return undefined;
     }
+
+    const tailPath = parts.slice(3).join('/');
 
     return {
       namespace,
       version,
+      tailPath,
     };
   }
 
   private buildUpstreamPath(
     req: Request,
     version: string,
+    tailPath: string,
     keepVersionPrefix: boolean,
   ): string {
-    const tailParam = req.params.path;
-    const tail =
-      typeof tailParam === 'string' && tailParam.length > 0
-        ? `/${tailParam}`
-        : '';
+    const tail = tailPath.length > 0 ? `/${tailPath}` : '';
 
     const basePath = keepVersionPrefix ? `/${version}${tail}` : tail || '/';
 
