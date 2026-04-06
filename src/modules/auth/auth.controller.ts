@@ -29,6 +29,44 @@ interface OAuth2SessionRequestBody {
   scope?: string;
 }
 
+interface OAuth2RefreshRequestBody {
+  refreshToken?: string;
+}
+
+interface OAuth2GatewaySessionResult {
+  accessToken: string;
+  user: {
+    id: string;
+    provider: string;
+    subject: string;
+    email: string | null;
+    name: string | null;
+  };
+}
+
+interface OAuth2GatewayRefreshResult extends OAuth2GatewaySessionResult {
+  refreshToken: string | null;
+  oauthAccessTokenExpiresIn: number | null;
+}
+
+type Oauth2ServiceContract = {
+  createAuthorizationRequest: () => Promise<{
+    authUrl: string;
+    state: string;
+  }>;
+  completeAuthorizationCodeGrant: (
+    code: string,
+    state: string,
+  ) => Promise<OAuth2GatewayRefreshResult>;
+  createSessionFromAccessToken: (
+    accessToken: string,
+    scope?: string,
+  ) => Promise<OAuth2GatewaySessionResult>;
+  refreshSessionFromRefreshToken: (
+    refreshToken: string,
+  ) => Promise<OAuth2GatewayRefreshResult>;
+};
+
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -36,6 +74,10 @@ export class AuthController {
     private readonly apiKeysService: ApiKeysService,
     private readonly configService: ConfigService,
   ) {}
+
+  private get oauth2(): Oauth2ServiceContract {
+    return this.oauth2Service as unknown as Oauth2ServiceContract;
+  }
 
   @Get('namespaces')
   getNamespaces(): { namespaces: string[] } {
@@ -54,7 +96,7 @@ export class AuthController {
 
   @Get('oauth2/authorize')
   async getAuthorizeUrl(): Promise<{ authorizeUrl: string; state: string }> {
-    const payload = await this.oauth2Service.createAuthorizationRequest();
+    const payload = await this.oauth2.createAuthorizationRequest();
 
     return {
       authorizeUrl: payload.authUrl,
@@ -68,6 +110,8 @@ export class AuthController {
     @Query('state') state: string,
   ): Promise<{
     accessToken: string;
+    refreshToken: string | null;
+    oauthAccessTokenExpiresIn: number | null;
     tokenType: 'Bearer';
     user: {
       id: string;
@@ -81,13 +125,15 @@ export class AuthController {
       throw new BadRequestException('code and state are required');
     }
 
-    const result = await this.oauth2Service.completeAuthorizationCodeGrant(
+    const result = await this.oauth2.completeAuthorizationCodeGrant(
       code,
       state,
     );
 
     return {
       accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      oauthAccessTokenExpiresIn: result.oauthAccessTokenExpiresIn,
       tokenType: 'Bearer',
       user: {
         id: result.user.id,
@@ -115,13 +161,50 @@ export class AuthController {
       throw new BadRequestException('accessToken is required');
     }
 
-    const result = await this.oauth2Service.createSessionFromAccessToken(
+    const result = await this.oauth2.createSessionFromAccessToken(
       body.accessToken,
       body.scope,
     );
 
     return {
       accessToken: result.accessToken,
+      tokenType: 'Bearer',
+      user: {
+        id: result.user.id,
+        provider: result.user.provider,
+        subject: result.user.subject,
+        email: result.user.email,
+        name: result.user.name,
+      },
+    };
+  }
+
+  @Post('oauth2/refresh')
+  async refreshOAuth2Session(@Body() body: OAuth2RefreshRequestBody): Promise<{
+    accessToken: string;
+    refreshToken: string | null;
+    oauthAccessTokenExpiresIn: number | null;
+    tokenType: 'Bearer';
+    user: {
+      id: string;
+      provider: string;
+      subject: string;
+      email: string | null;
+      name: string | null;
+    };
+  }> {
+    if (!body.refreshToken || body.refreshToken.length === 0) {
+      throw new BadRequestException('refreshToken is required');
+    }
+
+    const result = await this.oauth2.refreshSessionFromRefreshToken(
+      body.refreshToken,
+    );
+
+    return {
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      oauthAccessTokenExpiresIn: result.oauthAccessTokenExpiresIn,
       tokenType: 'Bearer',
       user: {
         id: result.user.id,

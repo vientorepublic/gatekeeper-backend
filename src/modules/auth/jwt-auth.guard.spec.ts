@@ -1,4 +1,5 @@
 import { UnauthorizedException, type ExecutionContext } from '@nestjs/common';
+import { describe, expect, it, jest } from '@jest/globals';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('JwtAuthGuard', () => {
@@ -35,12 +36,14 @@ describe('JwtAuthGuard', () => {
   });
 
   it('authenticates Bearer API key with request namespace for gateway forwarding', async () => {
-    const authenticateApiKey = jest.fn().mockResolvedValue({
-      id: 'user-1',
-      subject: 'subject-1',
-      provider: 'flowauth',
-      email: 'test@example.com',
-    });
+    const authenticateApiKey = jest.fn(() =>
+      Promise.resolve({
+        id: 'user-1',
+        subject: 'subject-1',
+        provider: 'flowauth',
+        email: 'test@example.com',
+      }),
+    );
 
     const guard = new JwtAuthGuard(
       { get: jest.fn() } as never,
@@ -62,7 +65,10 @@ describe('JwtAuthGuard', () => {
     const context = createContext(request);
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(authenticateApiKey).toHaveBeenCalledWith('gk_test_key', 'hashguard');
+    expect(authenticateApiKey.mock.calls[0]).toEqual([
+      'gk_test_key',
+      'hashguard',
+    ]);
     expect(request.user).toEqual({
       userId: 'user-1',
       subject: 'subject-1',

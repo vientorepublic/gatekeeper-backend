@@ -20,6 +20,8 @@ interface OAuth2StatePayload {
 
 interface TokenPayload {
   access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
   scope?: string;
 }
 
@@ -57,7 +59,12 @@ export class Oauth2Service {
   async completeAuthorizationCodeGrant(
     code: string,
     state: string,
-  ): Promise<{ accessToken: string; user: UserEntity }> {
+  ): Promise<{
+    accessToken: string;
+    user: UserEntity;
+    refreshToken: string | null;
+    oauthAccessTokenExpiresIn: number | null;
+  }> {
     const statePayload = await this.cacheManager.get<OAuth2StatePayload>(
       this.getStateCacheKey(state),
     );
@@ -88,6 +95,10 @@ export class Oauth2Service {
     return {
       accessToken: jwt,
       user,
+      refreshToken:
+        typeof tokens.refresh_token === 'string' ? tokens.refresh_token : null,
+      oauthAccessTokenExpiresIn:
+        typeof tokens.expires_in === 'number' ? tokens.expires_in : null,
     };
   }
 
@@ -106,6 +117,40 @@ export class Oauth2Service {
     return {
       accessToken: jwt,
       user,
+    };
+  }
+
+  async refreshSessionFromRefreshToken(refreshToken: string): Promise<{
+    accessToken: string;
+    user: UserEntity;
+    refreshToken: string | null;
+    oauthAccessTokenExpiresIn: number | null;
+  }> {
+    const client = this.createClient();
+    const refreshedTokens = await this.refreshAccessTokens(
+      client,
+      refreshToken,
+    );
+
+    if (!refreshedTokens.access_token) {
+      throw new UnauthorizedException('OAuth2 token refresh failed');
+    }
+
+    const profile = await this.fetchProfile(client, refreshedTokens);
+    const user = await this.usersService.upsertOAuth2User('flowauth', profile);
+    const jwt = this.issueGatewayToken(user, refreshedTokens.scope);
+
+    return {
+      accessToken: jwt,
+      user,
+      refreshToken:
+        typeof refreshedTokens.refresh_token === 'string'
+          ? refreshedTokens.refresh_token
+          : refreshToken,
+      oauthAccessTokenExpiresIn:
+        typeof refreshedTokens.expires_in === 'number'
+          ? refreshedTokens.expires_in
+          : null,
     };
   }
 
@@ -154,6 +199,18 @@ export class Oauth2Service {
     } catch (error) {
       const reason = this.getErrorMessage(error);
       throw new BadGatewayException(`OAuth2 token exchange failed: ${reason}`);
+    }
+  }
+
+  private async refreshAccessTokens(
+    client: FlowAuthClient,
+    refreshToken: string,
+  ): Promise<TokenPayload> {
+    try {
+      return (await client.refreshToken(refreshToken)) as TokenPayload;
+    } catch (error) {
+      const reason = this.getErrorMessage(error);
+      throw new BadGatewayException(`OAuth2 token refresh failed: ${reason}`);
     }
   }
 

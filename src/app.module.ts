@@ -17,6 +17,7 @@ import { ApiKeysService } from './modules/auth/api-keys.service';
 import { UserEntity } from './modules/auth/entities/user.entity';
 import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
 import { RouteRegistryService } from './modules/gateway/route-registry.service';
+import { GracefulShutdownService } from './common/lifecycle/graceful-shutdown.service';
 
 @Module({
   imports: [
@@ -123,6 +124,7 @@ import { RouteRegistryService } from './modules/gateway/route-registry.service';
     Oauth2Service,
     UsersService,
     ApiKeysService,
+    GracefulShutdownService,
     GatewayProxyMiddleware,
   ],
 })
