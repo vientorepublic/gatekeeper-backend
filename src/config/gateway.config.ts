@@ -107,6 +107,15 @@ export default registerAs('gateway', () => ({
     process.env.MAX_PROXY_REQUEST_BODY_BYTES,
     1_048_576,
   ),
+  proxyTimeoutMs: parseNumber(process.env.PROXY_TIMEOUT_MS, 15_000),
+  proxyCircuitBreakerFailureThreshold: parseNumber(
+    process.env.PROXY_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    3,
+  ),
+  proxyCircuitBreakerCooldownMs: parseNumber(
+    process.env.PROXY_CIRCUIT_BREAKER_COOLDOWN_MS,
+    10_000,
+  ),
   routeMap: parseRouteMap(process.env.ROUTE_MAP),
   redisUrl: process.env.REDIS_URL,
   oauth2Issuer: process.env.OAUTH2_ISSUER ?? '',

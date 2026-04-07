@@ -19,6 +19,8 @@ import { JwtAuthGuard } from '../src/modules/auth/jwt-auth.guard';
 import { Oauth2Service } from '../src/modules/auth/oauth2.service';
 import { GatewayProxyMiddleware } from '../src/modules/gateway/gateway-proxy.middleware';
 import { RouteRegistryService } from '../src/modules/gateway/route-registry.service';
+import { HealthController } from '../src/modules/health/health.controller';
+import { GatewayMetricsService } from '../src/modules/health/gateway-metrics.service';
 
 const cacheStore = new Map<string, unknown>();
 
@@ -39,6 +41,8 @@ const configServiceMock = {
           v1: 'http://hashguard.internal',
         },
         billing: 'http://billing.internal',
+        unstable: 'http://unstable.internal',
+        breaker: 'http://breaker.internal',
       };
     }
 
@@ -48,6 +52,18 @@ const configServiceMock = {
 
     if (key === 'gateway.maxProxyRequestBodyBytes') {
       return 8;
+    }
+
+    if (key === 'gateway.proxyTimeoutMs') {
+      return 25;
+    }
+
+    if (key === 'gateway.proxyCircuitBreakerFailureThreshold') {
+      return 2;
+    }
+
+    if (key === 'gateway.proxyCircuitBreakerCooldownMs') {
+      return 60_000;
     }
 
     return undefined;
@@ -72,10 +88,11 @@ class TestGatewayController {
 }
 
 @Module({
-  controllers: [TestGatewayController],
+  controllers: [TestGatewayController, HealthController],
   providers: [
     GatewayProxyMiddleware,
     RouteRegistryService,
+    GatewayMetricsService,
     {
       provide: ConfigService,
       useValue: configServiceMock,
@@ -330,6 +347,82 @@ describe('Gateway proxy e2e', () => {
       .expect(413);
 
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 502 with timeout error code when upstream fetch is aborted', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    fetchSpy.mockImplementationOnce(
+      (_input: string | URL | globalThis.Request, init?: RequestInit) => {
+        return new Promise((_, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        });
+      },
+    );
+
+    await request(server)
+      .get('/api/unstable/v1/health')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(502)
+      .expect((res) => {
+        expect(res.body.errorCode).toBe('UPSTREAM_TIMEOUT');
+      });
+  });
+
+  it('opens circuit after consecutive upstream failures', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    fetchSpy.mockRejectedValue(new Error('upstream unavailable'));
+
+    await request(server)
+      .get('/api/breaker/v1/health')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(502);
+
+    await request(server)
+      .get('/api/breaker/v1/health')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(502);
+
+    await request(server)
+      .get('/api/breaker/v1/health')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(503);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('exposes runtime proxy metrics at health metrics endpoint', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const response = await request(server).get('/health/metrics').expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        generatedAt: expect.any(String),
+        uptimeSeconds: expect.any(Number),
+        proxy: expect.objectContaining({
+          total: expect.any(Number),
+          upstream2xx: expect.any(Number),
+          gateway5xx: expect.any(Number),
+          payloadTooLarge: expect.any(Number),
+          timeouts: expect.any(Number),
+          circuitOpenRejections: expect.any(Number),
+          inFlight: expect.any(Number),
+          latencyMsAvg: expect.any(Number),
+        }),
+        runtime: expect.objectContaining({
+          memoryRssBytes: expect.any(Number),
+          heapUsedBytes: expect.any(Number),
+          eventLoopLagMsAvg: expect.any(Number),
+        }),
+      }),
+    );
+
+    expect(response.body.proxy.total).toBeGreaterThanOrEqual(1);
   });
 });
 

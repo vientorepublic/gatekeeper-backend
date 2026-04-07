@@ -1,5 +1,4 @@
 import type { Request } from 'express';
-import { PayloadTooLargeException } from '@nestjs/common';
 
 export interface RouteKey {
   namespace: string;
@@ -48,49 +47,6 @@ export function rewritePath(
   return rewritten || '/';
 }
 
-export async function readRequestBody(
-  req: Request,
-  maxBytes = 1_048_576,
-): Promise<Buffer | undefined> {
-  const method = req.method.toUpperCase();
-  if (method === 'GET' || method === 'HEAD') {
-    return undefined;
-  }
-
-  const chunks: Buffer[] = [];
-  let totalLength = 0;
-  for await (const chunk of req) {
-    let normalizedChunk: Buffer | undefined;
-
-    if (typeof chunk === 'string') {
-      normalizedChunk = Buffer.from(chunk);
-    } else if (Buffer.isBuffer(chunk)) {
-      normalizedChunk = chunk;
-    } else if (chunk instanceof Uint8Array) {
-      normalizedChunk = Buffer.from(chunk);
-    }
-
-    if (!normalizedChunk) {
-      continue;
-    }
-
-    totalLength += normalizedChunk.length;
-    if (maxBytes > 0 && totalLength > maxBytes) {
-      throw new PayloadTooLargeException(
-        `Request body exceeds maximum size of ${maxBytes} bytes`,
-      );
-    }
-
-    chunks.push(normalizedChunk);
-  }
-
-  if (chunks.length === 0) {
-    return undefined;
-  }
-
-  return Buffer.concat(chunks);
-}
-
 export function buildUpstreamHeaders(
   req: Request,
   issuerHint?: string,
@@ -122,6 +78,15 @@ export function buildUpstreamHeaders(
 }
 
 export function getProxyErrorCode(error: unknown): string {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'AbortError'
+  ) {
+    return 'UPSTREAM_TIMEOUT';
+  }
+
   if (typeof error !== 'object' || error === null) {
     return 'UPSTREAM_UNAVAILABLE';
   }

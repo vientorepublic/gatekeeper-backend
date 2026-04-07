@@ -18,6 +18,7 @@ import { UserEntity } from './modules/auth/entities/user.entity';
 import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
 import { RouteRegistryService } from './modules/gateway/route-registry.service';
 import { GracefulShutdownService } from './common/lifecycle/graceful-shutdown.service';
+import { GatewayMetricsService } from './modules/health/gateway-metrics.service';
 
 @Module({
   imports: [
@@ -126,6 +127,7 @@ import { GracefulShutdownService } from './common/lifecycle/graceful-shutdown.se
     ApiKeysService,
     GracefulShutdownService,
     GatewayProxyMiddleware,
+    GatewayMetricsService,
   ],
 })
 export class AppModule implements NestModule {

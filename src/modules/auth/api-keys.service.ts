@@ -36,14 +36,23 @@ export interface PaginatedUserApiKeys {
   hasPrevious: boolean;
 }
 
+interface CachedAuthenticatedApiKey {
+  user: UserEntity;
+  apiKeyId: string;
+  expiresAt: number;
+}
+
 @Injectable()
 export class ApiKeysService {
+  private readonly authCache = new Map<string, CachedAuthenticatedApiKey>();
+  private readonly authCacheTtlMs = 30_000;
+  private readonly lastUsedAtThrottle = new Map<string, number>();
+  private readonly lastUsedAtUpdateIntervalMs = 60_000;
+
   constructor(
     private readonly configService: ConfigService,
     @InjectRepository(ApiKeyEntity)
     private readonly apiKeysRepository: Repository<ApiKeyEntity>,
-    @InjectRepository(UserEntity)
-    private readonly usersRepository: Repository<UserEntity>,
   ) {}
 
   async listApiKeys(
@@ -145,6 +154,8 @@ export class ApiKeysService {
 
     target.revokedAt = new Date();
     await this.apiKeysRepository.save(target);
+    this.invalidateAuthCacheByHash(target.keyHash);
+    this.lastUsedAtThrottle.delete(target.id);
     return true;
   }
 
@@ -157,6 +168,18 @@ export class ApiKeysService {
     }
 
     const keyHash = this.hashApiKey(rawKey);
+    const now = Date.now();
+    const cacheKey = this.createAuthCacheKey(keyHash, namespace);
+    const cached = this.authCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+      this.touchLastUsedAtThrottled(cached.apiKeyId, now);
+      return cached.user;
+    }
+
+    if (cached) {
+      this.authCache.delete(cacheKey);
+    }
 
     const apiKey = await this.apiKeysRepository.findOne({
       where: {
@@ -164,26 +187,58 @@ export class ApiKeysService {
         revokedAt: IsNull(),
         ...(namespace ? { namespace } : {}),
       },
-    });
-
-    if (!apiKey) {
-      throw new UnauthorizedException('Invalid API key');
-    }
-
-    apiKey.lastUsedAt = new Date();
-    await this.apiKeysRepository.save(apiKey);
-
-    const user = await this.usersRepository.findOne({
-      where: {
-        id: apiKey.userId,
+      relations: {
+        user: true,
       },
     });
 
-    if (!user) {
-      throw new UnauthorizedException('API key user not found');
+    if (!apiKey || !apiKey.user) {
+      throw new UnauthorizedException('Invalid API key');
     }
 
-    return user;
+    this.authCache.set(cacheKey, {
+      user: apiKey.user,
+      apiKeyId: apiKey.id,
+      expiresAt: now + this.authCacheTtlMs,
+    });
+
+    this.touchLastUsedAtThrottled(apiKey.id, now);
+
+    return apiKey.user;
+  }
+
+  private createAuthCacheKey(keyHash: string, namespace?: string): string {
+    return `${namespace || '*'}:${keyHash}`;
+  }
+
+  private invalidateAuthCacheByHash(keyHash: string): void {
+    for (const key of this.authCache.keys()) {
+      if (key.endsWith(`:${keyHash}`)) {
+        this.authCache.delete(key);
+      }
+    }
+  }
+
+  private touchLastUsedAtThrottled(apiKeyId: string, now: number): void {
+    const lastUpdatedAt = this.lastUsedAtThrottle.get(apiKeyId) ?? 0;
+    if (now - lastUpdatedAt < this.lastUsedAtUpdateIntervalMs) {
+      return;
+    }
+
+    this.lastUsedAtThrottle.set(apiKeyId, now);
+
+    void this.apiKeysRepository
+      .update(
+        {
+          id: apiKeyId,
+        },
+        {
+          lastUsedAt: new Date(now),
+        },
+      )
+      .catch(() => {
+        this.lastUsedAtThrottle.delete(apiKeyId);
+      });
   }
 
   private hashApiKey(rawKey: string): string {

@@ -2,9 +2,7 @@ import {
   buildUpstreamHeaders,
   getProxyErrorCode,
   isResolvedRoute,
-  readRequestBody,
 } from './gateway-proxy.utils';
-import { PayloadTooLargeException } from '@nestjs/common';
 
 describe('gateway-proxy.utils', () => {
   describe('isResolvedRoute', () => {
@@ -22,47 +20,6 @@ describe('gateway-proxy.utils', () => {
       expect(isResolvedRoute({ target: 'http://localhost:4001' })).toBe(false);
       expect(isResolvedRoute({ target: 1, keepVersionPrefix: true })).toBe(
         false,
-      );
-    });
-  });
-
-  describe('readRequestBody', () => {
-    it('returns undefined for GET requests', async () => {
-      const req = {
-        method: 'GET',
-        *[Symbol.asyncIterator]() {
-          yield Buffer.from('ignored');
-        },
-      };
-
-      await expect(readRequestBody(req as never)).resolves.toBeUndefined();
-    });
-
-    it('concatenates body chunks for non-GET requests', async () => {
-      const req = {
-        method: 'POST',
-        *[Symbol.asyncIterator]() {
-          yield Buffer.from('hello');
-          yield Buffer.from(' ');
-          yield new Uint8Array(Buffer.from('world'));
-        },
-      };
-
-      const body = await readRequestBody(req as never);
-      expect(body?.toString('utf8')).toBe('hello world');
-    });
-
-    it('throws when request body exceeds configured size limit', async () => {
-      const req = {
-        method: 'POST',
-        *[Symbol.asyncIterator]() {
-          yield Buffer.from('hello');
-          yield Buffer.from('world');
-        },
-      };
-
-      await expect(readRequestBody(req as never, 8)).rejects.toThrow(
-        PayloadTooLargeException,
       );
     });
   });
@@ -103,6 +60,13 @@ describe('gateway-proxy.utils', () => {
     it('returns default code for unknown shape', () => {
       expect(getProxyErrorCode(new Error('boom'))).toBe('UPSTREAM_UNAVAILABLE');
       expect(getProxyErrorCode('boom')).toBe('UPSTREAM_UNAVAILABLE');
+    });
+
+    it('returns timeout code for abort errors', () => {
+      const error = new Error('timeout');
+      error.name = 'AbortError';
+
+      expect(getProxyErrorCode(error)).toBe('UPSTREAM_TIMEOUT');
     });
   });
 });
