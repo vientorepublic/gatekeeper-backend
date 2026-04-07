@@ -20,6 +20,7 @@ import type { GatewayUserIdentity } from '../../common/types/gateway.types';
 import { ConfigService } from '@nestjs/config';
 import type { RouteMap } from '../../common/types/gateway.types';
 import {
+  ApiKeyListQueryDto,
   ApiKeyRequestBodyDto,
   OAuth2CallbackQueryDto,
   OAuth2RefreshRequestBodyDto,
@@ -184,13 +185,19 @@ export class AuthController {
   async listApiKeys(
     @Req() req: Request & { user?: GatewayUserIdentity },
     @Param('namespace') namespace: string,
+    @Query() query: ApiKeyListQueryDto,
   ): Promise<ApiKeyListResponseDto> {
     const user = req.user;
     if (!user?.userId) {
       throw new UnauthorizedException('Authenticated user is required');
     }
 
-    return this.apiKeysService.listApiKeys(user.userId, namespace);
+    return this.apiKeysService.listApiKeys(
+      user.userId,
+      namespace,
+      query.page,
+      query.pageSize,
+    );
   }
 
   @Post('api-keys/:namespace')

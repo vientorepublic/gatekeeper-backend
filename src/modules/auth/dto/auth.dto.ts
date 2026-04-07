@@ -1,5 +1,6 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsInt, Max, Min } from 'class-validator';
 
 function trimToString(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
@@ -58,6 +59,21 @@ export class ApiKeyRequestBodyDto {
   label?: string;
 }
 
+export class ApiKeyListQueryDto {
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+}
+
 export interface OAuth2UserDto {
   id: string;
   provider: string;
@@ -97,7 +113,15 @@ export interface ApiKeyListItemDto {
   revokedAt: Date | null;
 }
 
-export type ApiKeyListResponseDto = ApiKeyListItemDto[];
+export interface ApiKeyListResponseDto {
+  items: ApiKeyListItemDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
 
 export interface ApiKeyIssueResponseDto {
   id: string;

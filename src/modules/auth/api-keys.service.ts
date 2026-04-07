@@ -26,6 +26,16 @@ export interface UserApiKeyView {
   revokedAt: Date | null;
 }
 
+export interface PaginatedUserApiKeys {
+  items: UserApiKeyView[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
 @Injectable()
 export class ApiKeysService {
   constructor(
@@ -39,8 +49,24 @@ export class ApiKeysService {
   async listApiKeys(
     userId: string,
     namespace: string,
-  ): Promise<UserApiKeyView[]> {
+    page = 1,
+    pageSize = 20,
+  ): Promise<PaginatedUserApiKeys> {
     this.assertManagedNamespace(namespace);
+
+    const normalizedPage = Math.max(1, Math.trunc(page));
+    const normalizedPageSize = Math.max(1, Math.trunc(pageSize));
+
+    const total = await this.apiKeysRepository.count({
+      where: {
+        userId,
+        namespace,
+      },
+    });
+
+    const totalPages = total === 0 ? 0 : Math.ceil(total / normalizedPageSize);
+    const effectivePage =
+      totalPages === 0 ? 1 : Math.min(normalizedPage, totalPages);
 
     const apiKeys = await this.apiKeysRepository.find({
       where: {
@@ -50,17 +76,27 @@ export class ApiKeysService {
       order: {
         createdAt: 'DESC',
       },
+      skip: (effectivePage - 1) * normalizedPageSize,
+      take: normalizedPageSize,
     });
 
-    return apiKeys.map((apiKey) => ({
-      id: apiKey.id,
-      namespace: apiKey.namespace,
-      prefix: apiKey.keyPrefix,
-      label: apiKey.label,
-      createdAt: apiKey.createdAt,
-      lastUsedAt: apiKey.lastUsedAt,
-      revokedAt: apiKey.revokedAt,
-    }));
+    return {
+      items: apiKeys.map((apiKey) => ({
+        id: apiKey.id,
+        namespace: apiKey.namespace,
+        prefix: apiKey.keyPrefix,
+        label: apiKey.label,
+        createdAt: apiKey.createdAt,
+        lastUsedAt: apiKey.lastUsedAt,
+        revokedAt: apiKey.revokedAt,
+      })),
+      page: effectivePage,
+      pageSize: normalizedPageSize,
+      total,
+      totalPages,
+      hasNext: totalPages > 0 && effectivePage < totalPages,
+      hasPrevious: totalPages > 0 && effectivePage > 1,
+    };
   }
 
   async issueApiKey(

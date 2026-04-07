@@ -1,6 +1,8 @@
+import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
+  ApiKeyListQueryDto,
   ApiKeyRequestBodyDto,
   OAuth2CallbackQueryDto,
   OAuth2RefreshRequestBodyDto,
@@ -64,5 +66,31 @@ describe('AuthController DTO validation', () => {
 
     expect(errors).toHaveLength(0);
     expect(dto.label).toBeUndefined();
+  });
+
+  it('accepts valid api key list pagination query', () => {
+    const dto = plainToInstance(ApiKeyListQueryDto, {
+      page: '2',
+      pageSize: '25',
+    });
+
+    const errors = validateSync(dto);
+
+    expect(errors).toHaveLength(0);
+    expect(dto.page).toBe(2);
+    expect(dto.pageSize).toBe(25);
+  });
+
+  it('rejects invalid api key list pagination query', () => {
+    const dto = plainToInstance(ApiKeyListQueryDto, {
+      page: '0',
+      pageSize: '101',
+    });
+
+    const errors = validateSync(dto);
+    const fields = errors.map((error) => error.property);
+
+    expect(fields).toContain('page');
+    expect(fields).toContain('pageSize');
   });
 });
