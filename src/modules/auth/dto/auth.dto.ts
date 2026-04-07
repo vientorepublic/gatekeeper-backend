@@ -87,6 +87,16 @@ export interface NamespacesResponseDto {
   namespaces: string[];
 }
 
+export interface RouteGuideNamespaceDto {
+  namespace: string;
+  supportsAnyVersion: boolean;
+  versions: string[];
+}
+
+export interface RouteGuideResponseDto {
+  namespaces: RouteGuideNamespaceDto[];
+}
+
 export interface OAuth2AuthorizeResponseDto {
   authorizeUrl: string;
   state: string;

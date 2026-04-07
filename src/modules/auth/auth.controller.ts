@@ -27,6 +27,8 @@ import {
   OAuth2SessionRequestBodyDto,
 } from './dto/auth.dto';
 import type {
+  RouteGuideNamespaceDto,
+  RouteGuideResponseDto,
   ApiKeyIssueResponseDto,
   ApiKeyListResponseDto,
   ApiKeyRevokeResponseDto,
@@ -96,6 +98,41 @@ export class AuthController {
     return {
       namespaces: Object.keys(routeMap),
     };
+  }
+
+  @Get('route-map')
+  @UseGuards(JwtAuthGuard)
+  getRouteGuide(): RouteGuideResponseDto {
+    const routeMap = this.configService.get<RouteMap>('gateway.routeMap', {
+      infer: true,
+    });
+
+    if (!routeMap) {
+      throw new ConflictException('ROUTE_MAP is not configured');
+    }
+
+    const namespaces = Object.entries(routeMap)
+      .map(([namespace, entry]) => {
+        const routeGuide: RouteGuideNamespaceDto =
+          typeof entry === 'string'
+            ? {
+                namespace,
+                supportsAnyVersion: true,
+                versions: [],
+              }
+            : {
+                namespace,
+                supportsAnyVersion: false,
+                versions: Object.keys(entry).sort((left, right) =>
+                  left.localeCompare(right),
+                ),
+              };
+
+        return routeGuide;
+      })
+      .sort((left, right) => left.namespace.localeCompare(right.namespace));
+
+    return { namespaces };
   }
 
   @Get('oauth2/authorize')
