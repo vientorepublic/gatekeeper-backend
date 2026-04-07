@@ -7,6 +7,7 @@ export interface OAuth2UserProfile {
   sub: string;
   email?: string;
   name?: string;
+  avatarUrl?: string;
   rawProfile: Record<string, unknown>;
 }
 
@@ -37,6 +38,7 @@ export class UsersService {
     if (existing) {
       existing.email = profile.email ?? existing.email;
       existing.name = profile.name ?? existing.name;
+      existing.avatarUrl = profile.avatarUrl ?? existing.avatarUrl;
       existing.profile = profile.rawProfile;
       return this.usersRepository.save(existing);
     }
@@ -46,6 +48,7 @@ export class UsersService {
       subject: profile.sub,
       email: profile.email ?? null,
       name: profile.name ?? null,
+      avatarUrl: profile.avatarUrl ?? null,
       profile: profile.rawProfile,
     });
 

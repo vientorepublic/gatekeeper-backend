@@ -43,6 +43,7 @@ interface OAuth2GatewaySessionResult {
     subject: string;
     email: string | null;
     name: string | null;
+    avatarUrl: string | null;
   };
 }
 
@@ -126,6 +127,7 @@ export class AuthController {
         subject: result.user.subject,
         email: result.user.email,
         name: result.user.name,
+        avatarUrl: result.user.avatarUrl,
       },
     };
   }
@@ -148,6 +150,7 @@ export class AuthController {
         subject: result.user.subject,
         email: result.user.email,
         name: result.user.name,
+        avatarUrl: result.user.avatarUrl,
       },
     };
   }
@@ -171,6 +174,7 @@ export class AuthController {
         subject: result.user.subject,
         email: result.user.email,
         name: result.user.name,
+        avatarUrl: result.user.avatarUrl,
       },
     };
   }

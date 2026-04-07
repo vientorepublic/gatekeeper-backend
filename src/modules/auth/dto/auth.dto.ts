@@ -64,6 +64,7 @@ export interface OAuth2UserDto {
   subject: string;
   email: string | null;
   name: string | null;
+  avatarUrl: string | null;
 }
 
 export interface NamespacesResponseDto {

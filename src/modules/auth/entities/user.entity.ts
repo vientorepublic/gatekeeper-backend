@@ -27,6 +27,9 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 255, nullable: true })
   name!: string | null;
 
+  @Column({ type: 'varchar', length: 1024, nullable: true })
+  avatarUrl!: string | null;
+
   @Column({ type: 'simple-json', nullable: true })
   profile!: Record<string, unknown> | null;
 

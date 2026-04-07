@@ -185,6 +185,15 @@ export class Oauth2Service {
         'nickname',
         'preferred_username',
       ]),
+      avatarUrl: this.normalizeAvatarUrl(
+        this.extractString(userInfo, [
+          'picture',
+          'avatar',
+          'avatar_url',
+          'profile_image_url',
+          'image',
+        ]),
+      ),
       rawProfile: userInfo,
     };
   }
@@ -330,6 +339,28 @@ export class Oauth2Service {
     }
 
     return undefined;
+  }
+
+  private normalizeAvatarUrl(value?: string): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const normalized = value.trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    try {
+      const parsed = new URL(normalized);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return undefined;
+      }
+
+      return parsed.toString();
+    } catch {
+      return undefined;
+    }
   }
 
   private getErrorMessage(error: unknown): string {
