@@ -4,7 +4,7 @@ NestJS 기반 API Gateway 서버입니다.
 
 ## 핵심 설계
 
-- 게이트웨이 프록시 엔드포인트 규칙: `/gateway/{namespace}/{version}/...`
+- 게이트웨이 프록시 엔드포인트 규칙: `/api/{namespace}/{version}/...`
 - 게이트웨이 자체 엔드포인트(`/health`, `/auth/...`)와 프록시 엔드포인트를 경로 레벨에서 명시적으로 분리
 - 업스트림 포워딩은 `namespace`, `version`, `*path` 라우트 파라미터를 기준으로 수행
 - 인증: FlowAuth OAuth2 Authorization Code Grant + 내부 JWT + API Key
@@ -28,7 +28,7 @@ NestJS 기반 API Gateway 서버입니다.
 - `DB_CHARSET`: MariaDB 문자셋 (기본 `utf8mb4`)
 - `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부
 - `DB_LOGGING`: SQL 로깅 여부
-- `ROUTE_MAP`: 업스트림 매핑 JSON (`/gateway/{namespace}/{version}`에 매핑)
+- `ROUTE_MAP`: 업스트림 매핑 JSON (`/api/{namespace}/{version}`에 매핑)
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
 - `CORS_ORIGINS`: 허용할 브라우저 오리진 목록 (콤마 구분)
 - `OAUTH2_SERVER`: FlowAuth 서버 URL
@@ -77,8 +77,8 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
 }
 ```
 
-- 버전 맵을 정의한 경우: `/gateway/{namespace}/{version}/...`에서 `/{namespace}/{version}`가 제거되어 전달됩니다.
-- 버전을 생략한 경우(문자열 대상): `/gateway/{namespace}/{version}/...`에서 `/{namespace}`만 제거되어 `/{version}/...` 경로가 업스트림으로 전달됩니다.
+- 버전 맵을 정의한 경우: `/api/{namespace}/{version}/...`에서 `/{namespace}/{version}`가 제거되어 전달됩니다.
+- 버전을 생략한 경우(문자열 대상): `/api/{namespace}/{version}/...`에서 `/{namespace}`만 제거되어 `/{version}/...` 경로가 업스트림으로 전달됩니다.
 
 ## 실행
 
@@ -108,7 +108,7 @@ e2e 테스트는 아래 시나리오를 포함합니다.
 ## 요청 예시
 
 - 헬스체크: `GET /health`
-- 프록시 요청: `GET /gateway/orders/v1/customers/42`
+- 프록시 요청: `GET /api/orders/v1/customers/42`
 - OAuth2 인증 시작: `GET /auth/oauth2/authorize`
 - OAuth2 콜백 처리: `GET /auth/oauth2/callback?code=...&state=...`
 - OAuth2 Access Token으로 세션 생성: `POST /auth/oauth2/session`
@@ -117,7 +117,7 @@ e2e 테스트는 아래 시나리오를 포함합니다.
 - API Key 발급(인증 필요): `POST /auth/api-keys/:namespace`
 - API Key 폐기(인증 필요): `DELETE /auth/api-keys/:namespace/:id`
 
-게이트웨이는 `/gateway/orders/v1`를 제거한 `/customers/42` 경로로 `orders:v1` 업스트림에 전달합니다.
+게이트웨이는 `/api/orders/v1`를 제거한 `/customers/42` 경로로 `orders:v1` 업스트림에 전달합니다.
 
 ## 인증 흐름
 

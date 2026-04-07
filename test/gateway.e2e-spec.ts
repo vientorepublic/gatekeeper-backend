@@ -63,7 +63,7 @@ const apiKeysServiceMock = {
   }),
 };
 
-@Controller('gateway/:namespace/:version')
+@Controller('api/:namespace/:version')
 class TestGatewayController {
   @All('*path')
   passthrough(): void {
@@ -244,7 +244,7 @@ describe('Gateway proxy e2e', () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
     await request(server)
-      .get('/gateway/hashguard/v1/health?deep=true')
+      .get('/api/hashguard/v1/health?deep=true')
       .set('authorization', 'Bearer gk_test_key')
       .expect(200);
 
@@ -262,7 +262,7 @@ describe('Gateway proxy e2e', () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
     await request(server)
-      .get('/gateway/billing/v1/health')
+      .get('/api/billing/v1/health')
       .set('authorization', 'Bearer gk_test_key')
       .expect(200);
 
@@ -279,7 +279,7 @@ describe('Gateway proxy e2e', () => {
   it('rejects forwarding when authorization header is missing', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
-    await request(server).get('/gateway/hashguard/v1/health').expect(401);
+    await request(server).get('/api/hashguard/v1/health').expect(401);
 
     expect(apiKeysServiceMock.authenticateApiKey).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -289,7 +289,7 @@ describe('Gateway proxy e2e', () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
     await request(server)
-      .get('/gateway/hashguard/v1/health')
+      .get('/api/hashguard/v1/health')
       .set('authorization', 'Bearer    ')
       .expect(401);
 
@@ -301,7 +301,7 @@ describe('Gateway proxy e2e', () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
     await request(server)
-      .get('/gateway/hashguard/v9/health')
+      .get('/api/hashguard/v9/health')
       .set('authorization', 'Bearer gk_test_key')
       .expect(404);
 
@@ -313,7 +313,7 @@ describe('Gateway proxy e2e', () => {
     fetchSpy.mockRejectedValueOnce(new Error('connection refused'));
 
     await request(server)
-      .get('/gateway/hashguard/v1/health')
+      .get('/api/hashguard/v1/health')
       .set('authorization', 'Bearer gk_test_key')
       .expect(502)
       .expect('content-type', /application\/problem\+json/);
@@ -323,7 +323,7 @@ describe('Gateway proxy e2e', () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
     await request(server)
-      .post('/gateway/hashguard/v1/echo')
+      .post('/api/hashguard/v1/echo')
       .set('authorization', 'Bearer gk_test_key')
       .set('content-type', 'text/plain')
       .send('0123456789')

@@ -40,7 +40,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     const proxyPath = this.parseProxyPath(req);
     if (!proxyPath) {
       throw new NotFoundException(
-        'Path must follow /gateway/{namespace}/{version}/...',
+        'Path must follow /api/{namespace}/{version}/...',
       );
     }
 
@@ -194,7 +194,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       queryIndex >= 0 ? originalUrl.slice(0, queryIndex) : originalUrl;
     const parts = pathname.split('/').filter(Boolean);
 
-    if (parts[0] !== 'gateway') {
+    if (parts[0] !== 'api') {
       return undefined;
     }
 
