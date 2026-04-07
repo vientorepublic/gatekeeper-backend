@@ -5,7 +5,7 @@ import {
   OAuth2CallbackQueryDto,
   OAuth2RefreshRequestBodyDto,
   OAuth2SessionRequestBodyDto,
-} from './auth.controller';
+} from './dto/auth.dto';
 
 describe('AuthController DTO validation', () => {
   it('requires non-empty OAuth2 callback code and state', () => {

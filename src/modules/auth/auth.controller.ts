@@ -12,8 +12,6 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Request } from 'express';
 import { ApiKeysService } from './api-keys.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -21,63 +19,21 @@ import { Oauth2Service } from './oauth2.service';
 import type { GatewayUserIdentity } from '../../common/types/gateway.types';
 import { ConfigService } from '@nestjs/config';
 import type { RouteMap } from '../../common/types/gateway.types';
-
-function trimToString(value: unknown): unknown {
-  return typeof value === 'string' ? value.trim() : value;
-}
-
-function trimToUndefined(value: unknown): unknown {
-  if (typeof value !== 'string') {
-    return value;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-export class OAuth2CallbackQueryDto {
-  @Transform(({ value }) => trimToString(value))
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(2048)
-  code!: string;
-
-  @Transform(({ value }) => trimToString(value))
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(2048)
-  state!: string;
-}
-
-export class OAuth2SessionRequestBodyDto {
-  @Transform(({ value }) => trimToString(value))
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(8192)
-  accessToken!: string;
-
-  @Transform(({ value }) => trimToUndefined(value))
-  @IsOptional()
-  @IsString()
-  @MaxLength(1024)
-  scope?: string;
-}
-
-export class OAuth2RefreshRequestBodyDto {
-  @Transform(({ value }) => trimToString(value))
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(8192)
-  refreshToken!: string;
-}
-
-export class ApiKeyRequestBodyDto {
-  @Transform(({ value }) => trimToUndefined(value))
-  @IsOptional()
-  @IsString()
-  @MaxLength(128)
-  label?: string;
-}
+import {
+  ApiKeyRequestBodyDto,
+  OAuth2CallbackQueryDto,
+  OAuth2RefreshRequestBodyDto,
+  OAuth2SessionRequestBodyDto,
+} from './dto/auth.dto';
+import type {
+  ApiKeyIssueResponseDto,
+  ApiKeyListResponseDto,
+  ApiKeyRevokeResponseDto,
+  NamespacesResponseDto,
+  OAuth2AuthorizeResponseDto,
+  OAuth2RefreshResponseDto,
+  OAuth2SessionResponseDto,
+} from './dto/auth.dto';
 
 interface OAuth2GatewaySessionResult {
   accessToken: string;
@@ -126,7 +82,7 @@ export class AuthController {
   }
 
   @Get('namespaces')
-  getNamespaces(): { namespaces: string[] } {
+  getNamespaces(): NamespacesResponseDto {
     const routeMap = this.configService.get<RouteMap>('gateway.routeMap', {
       infer: true,
     });
@@ -141,7 +97,7 @@ export class AuthController {
   }
 
   @Get('oauth2/authorize')
-  async getAuthorizeUrl(): Promise<{ authorizeUrl: string; state: string }> {
+  async getAuthorizeUrl(): Promise<OAuth2AuthorizeResponseDto> {
     const payload = await this.oauth2.createAuthorizationRequest();
 
     return {
@@ -151,19 +107,9 @@ export class AuthController {
   }
 
   @Get('oauth2/callback')
-  async handleOAuth2Callback(@Query() query: OAuth2CallbackQueryDto): Promise<{
-    accessToken: string;
-    refreshToken: string | null;
-    oauthAccessTokenExpiresIn: number | null;
-    tokenType: 'Bearer';
-    user: {
-      id: string;
-      provider: string;
-      subject: string;
-      email: string | null;
-      name: string | null;
-    };
-  }> {
+  async handleOAuth2Callback(
+    @Query() query: OAuth2CallbackQueryDto,
+  ): Promise<OAuth2RefreshResponseDto> {
     const result = await this.oauth2.completeAuthorizationCodeGrant(
       query.code,
       query.state,
@@ -187,17 +133,7 @@ export class AuthController {
   @Post('oauth2/session')
   async createOAuth2Session(
     @Body() body: OAuth2SessionRequestBodyDto,
-  ): Promise<{
-    accessToken: string;
-    tokenType: 'Bearer';
-    user: {
-      id: string;
-      provider: string;
-      subject: string;
-      email: string | null;
-      name: string | null;
-    };
-  }> {
+  ): Promise<OAuth2SessionResponseDto> {
     const result = await this.oauth2.createSessionFromAccessToken(
       body.accessToken,
       body.scope,
@@ -219,19 +155,7 @@ export class AuthController {
   @Post('oauth2/refresh')
   async refreshOAuth2Session(
     @Body() body: OAuth2RefreshRequestBodyDto,
-  ): Promise<{
-    accessToken: string;
-    refreshToken: string | null;
-    oauthAccessTokenExpiresIn: number | null;
-    tokenType: 'Bearer';
-    user: {
-      id: string;
-      provider: string;
-      subject: string;
-      email: string | null;
-      name: string | null;
-    };
-  }> {
+  ): Promise<OAuth2RefreshResponseDto> {
     const result = await this.oauth2.refreshSessionFromRefreshToken(
       body.refreshToken,
     );
@@ -256,17 +180,7 @@ export class AuthController {
   async listApiKeys(
     @Req() req: Request & { user?: GatewayUserIdentity },
     @Param('namespace') namespace: string,
-  ): Promise<
-    Array<{
-      id: string;
-      namespace: string;
-      prefix: string;
-      label: string | null;
-      createdAt: Date;
-      lastUsedAt: Date | null;
-      revokedAt: Date | null;
-    }>
-  > {
+  ): Promise<ApiKeyListResponseDto> {
     const user = req.user;
     if (!user?.userId) {
       throw new UnauthorizedException('Authenticated user is required');
@@ -281,14 +195,7 @@ export class AuthController {
     @Req() req: Request & { user?: GatewayUserIdentity },
     @Param('namespace') namespace: string,
     @Body() body: ApiKeyRequestBodyDto,
-  ): Promise<{
-    id: string;
-    namespace: string;
-    apiKey: string;
-    prefix: string;
-    createdAt: Date;
-    label: string | null;
-  }> {
+  ): Promise<ApiKeyIssueResponseDto> {
     const user = req.user;
     if (!user?.userId) {
       throw new UnauthorizedException('Authenticated user is required');
@@ -316,7 +223,7 @@ export class AuthController {
     @Req() req: Request & { user?: GatewayUserIdentity },
     @Param('namespace') namespace: string,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-  ): Promise<{ revoked: boolean }> {
+  ): Promise<ApiKeyRevokeResponseDto> {
     const user = req.user;
     if (!user?.userId) {
       throw new UnauthorizedException('Authenticated user is required');
