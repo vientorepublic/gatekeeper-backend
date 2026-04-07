@@ -20,6 +20,9 @@ NestJS 기반 API Gateway 서버입니다.
 - `JWT_HMAC_SECRET`: 내부 JWT 서명 비밀키
 - `JWT_EXPIRES_IN_SECONDS`: 내부 JWT 만료(초)
 - `MAX_PROXY_REQUEST_BODY_BYTES`: 프록시 요청 본문 최대 크기(바이트, 기본 `1048576`)
+- `PROXY_TIMEOUT_MS`: 업스트림 프록시 타임아웃(밀리초, 기본 `15000`)
+- `PROXY_CIRCUIT_BREAKER_FAILURE_THRESHOLD`: 회로 차단기 연속 실패 임계값(기본 `3`)
+- `PROXY_CIRCUIT_BREAKER_COOLDOWN_MS`: 회로 차단기 재시도 대기 시간(밀리초, 기본 `10000`)
 - `DB_HOST`: MariaDB 호스트
 - `DB_PORT`: MariaDB 포트
 - `DB_USERNAME`: MariaDB 사용자명
@@ -46,6 +49,8 @@ NestJS 기반 API Gateway 서버입니다.
 - API Key 폐기 엔드포인트의 `:id`는 UUID v4 형식이어야 하며, 형식이 잘못되면 `400 Bad Request`를 반환합니다.
 - 게이트웨이 프록시 본문이 `MAX_PROXY_REQUEST_BODY_BYTES`를 초과하면 `413 Payload Too Large`를 반환합니다.
 - 업스트림 호출 실패는 `502 Bad Gateway`(`application/problem+json`)로 반환됩니다.
+- 업스트림 타임아웃은 `502 Bad Gateway` + `errorCode: "UPSTREAM_TIMEOUT"`으로 반환됩니다.
+- 동일 업스트림이 연속 실패 임계값을 넘기면 회로 차단기가 열리고, 냉각 시간 동안 `503 Service Unavailable`을 반환합니다.
 
 ## JWT_HMAC_SECRET 생성 가이드
 
@@ -96,6 +101,9 @@ npm test
 
 # e2e tests
 npm run test:e2e
+
+# proxy benchmark (optimized vs legacy)
+npm run bench:proxy
 ```
 
 e2e 테스트는 아래 시나리오를 포함합니다.
@@ -103,11 +111,83 @@ e2e 테스트는 아래 시나리오를 포함합니다.
 - 프록시 경로 재작성(`version map`, `direct namespace target`) 검증
 - 인증 실패(헤더 누락/빈 Bearer) 검증
 - 미존재 라우트 매핑(404), 업스트림 장애(502), 본문 크기 초과(413) 검증
+- 업스트림 타임아웃(502 + `UPSTREAM_TIMEOUT`), 회로 차단기 오픈(503), `/health/metrics` 응답 검증
 - Auth 입력 DTO 검증(필수값, 미정의 필드 차단, 길이 제한, UUID 파라미터 검증)
+
+## 운영 관측
+
+- 헬스체크: `GET /health`
+- 게이트웨이 런타임 매트릭: `GET /health/metrics`
+
+`/health/metrics`는 아래 정보를 제공합니다.
+
+- `proxy.total`, `proxy.inFlight`, `proxy.latencyMsAvg`
+- `proxy.upstream2xx/3xx/4xx/5xx`
+- `proxy.gateway4xx/5xx`
+- `proxy.timeouts`, `proxy.circuitOpenRejections`, `proxy.payloadTooLarge`
+- `runtime.memoryRssBytes`, `runtime.heapUsedBytes`, `runtime.eventLoopLagMsAvg`
+
+예시:
+
+```json
+{
+  "generatedAt": "2026-04-07T10:10:00.000Z",
+  "uptimeSeconds": 123,
+  "proxy": {
+    "total": 4123,
+    "upstream2xx": 3900,
+    "upstream3xx": 10,
+    "upstream4xx": 120,
+    "upstream5xx": 50,
+    "gateway4xx": 30,
+    "gateway5xx": 13,
+    "timeouts": 8,
+    "circuitOpenRejections": 2,
+    "payloadTooLarge": 4,
+    "inFlight": 3,
+    "latencyMsAvg": 6.7
+  },
+  "runtime": {
+    "memoryRssBytes": 183025664,
+    "heapUsedBytes": 69513216,
+    "eventLoopLagMsAvg": 1.2
+  }
+}
+```
+
+## 프록시 벤치마크
+
+`npm run bench:proxy`는 동일 조건에서 아래 두 구현을 비교합니다.
+
+- `optimized`: 현재 스트리밍 기반 프록시 미들웨어
+- `legacy`: 이전 버퍼링 기반(요청/응답 전체 메모리 적재) 동작을 벤치마크 내부에서 재현한 미들웨어
+
+출력 항목:
+
+- `rps`(throughput), `p99Ms`(지연), `errors`, `timeouts`, `rssDeltaMB`
+- 시나리오별 `throughput gain`, `p99 latency reduction`
+
+벤치마크 제어용 환경변수:
+
+- `BENCH_DURATION_SECONDS` (기본 `10`)
+- `BENCH_CONNECTIONS` (기본 `60`)
+- `BENCH_PAYLOAD_BYTES` (기본 `262144` = 256KB)
+- `BENCH_ASSERT` (`1`로 설정 시 최소 성능 향상 기준 미달이면 실패)
+- `BENCH_MIN_THROUGHPUT_GAIN_PERCENT` (`BENCH_ASSERT=1`일 때 사용, 기본 `5`)
+
+권장 실행 예시:
+
+```bash
+BENCH_DURATION_SECONDS=20 \
+BENCH_CONNECTIONS=100 \
+BENCH_PAYLOAD_BYTES=1048576 \
+npm run bench:proxy
+```
 
 ## 요청 예시
 
 - 헬스체크: `GET /health`
+- 런타임 매트릭: `GET /health/metrics`
 - 프록시 요청: `GET /api/{namespace}/{version}/...`
 - OAuth2 인증 시작: `GET /auth/oauth2/authorize`
 - OAuth2 콜백 처리: `GET /auth/oauth2/callback?code=...&state=...`
