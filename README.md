@@ -108,7 +108,7 @@ e2e 테스트는 아래 시나리오를 포함합니다.
 ## 요청 예시
 
 - 헬스체크: `GET /health`
-- 프록시 요청: `GET /api/orders/v1/customers/42`
+- 프록시 요청: `GET /api/{namespace}/{version}/...`
 - OAuth2 인증 시작: `GET /auth/oauth2/authorize`
 - OAuth2 콜백 처리: `GET /auth/oauth2/callback?code=...&state=...`
 - OAuth2 Access Token으로 세션 생성: `POST /auth/oauth2/session`
@@ -116,8 +116,6 @@ e2e 테스트는 아래 시나리오를 포함합니다.
 - API Key 조회(인증 필요): `GET /auth/api-keys/:namespace`
 - API Key 발급(인증 필요): `POST /auth/api-keys/:namespace`
 - API Key 폐기(인증 필요): `DELETE /auth/api-keys/:namespace/:id`
-
-게이트웨이는 `/api/orders/v1`를 제거한 `/customers/42` 경로로 `orders:v1` 업스트림에 전달합니다.
 
 ## 인증 흐름
 
