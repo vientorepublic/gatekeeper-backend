@@ -1,10 +1,10 @@
 import {
-  BadRequestException,
   Body,
   ConflictException,
   Controller,
   Delete,
   Get,
+  ParseUUIDPipe,
   Param,
   Post,
   Query,
@@ -12,6 +12,8 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { Transform } from 'class-transformer';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Request } from 'express';
 import { ApiKeysService } from './api-keys.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -20,17 +22,61 @@ import type { GatewayUserIdentity } from '../../common/types/gateway.types';
 import { ConfigService } from '@nestjs/config';
 import type { RouteMap } from '../../common/types/gateway.types';
 
-interface ApiKeyRequestBody {
-  label?: string;
+function trimToString(value: unknown): unknown {
+  return typeof value === 'string' ? value.trim() : value;
 }
 
-interface OAuth2SessionRequestBody {
-  accessToken?: string;
+function trimToUndefined(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export class OAuth2CallbackQueryDto {
+  @Transform(({ value }) => trimToString(value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2048)
+  code!: string;
+
+  @Transform(({ value }) => trimToString(value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2048)
+  state!: string;
+}
+
+export class OAuth2SessionRequestBodyDto {
+  @Transform(({ value }) => trimToString(value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(8192)
+  accessToken!: string;
+
+  @Transform(({ value }) => trimToUndefined(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
   scope?: string;
 }
 
-interface OAuth2RefreshRequestBody {
-  refreshToken?: string;
+export class OAuth2RefreshRequestBodyDto {
+  @Transform(({ value }) => trimToString(value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(8192)
+  refreshToken!: string;
+}
+
+export class ApiKeyRequestBodyDto {
+  @Transform(({ value }) => trimToUndefined(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  label?: string;
 }
 
 interface OAuth2GatewaySessionResult {
@@ -105,10 +151,7 @@ export class AuthController {
   }
 
   @Get('oauth2/callback')
-  async handleOAuth2Callback(
-    @Query('code') code: string,
-    @Query('state') state: string,
-  ): Promise<{
+  async handleOAuth2Callback(@Query() query: OAuth2CallbackQueryDto): Promise<{
     accessToken: string;
     refreshToken: string | null;
     oauthAccessTokenExpiresIn: number | null;
@@ -121,13 +164,9 @@ export class AuthController {
       name: string | null;
     };
   }> {
-    if (!code || !state) {
-      throw new BadRequestException('code and state are required');
-    }
-
     const result = await this.oauth2.completeAuthorizationCodeGrant(
-      code,
-      state,
+      query.code,
+      query.state,
     );
 
     return {
@@ -146,7 +185,9 @@ export class AuthController {
   }
 
   @Post('oauth2/session')
-  async createOAuth2Session(@Body() body: OAuth2SessionRequestBody): Promise<{
+  async createOAuth2Session(
+    @Body() body: OAuth2SessionRequestBodyDto,
+  ): Promise<{
     accessToken: string;
     tokenType: 'Bearer';
     user: {
@@ -157,10 +198,6 @@ export class AuthController {
       name: string | null;
     };
   }> {
-    if (!body.accessToken || body.accessToken.length === 0) {
-      throw new BadRequestException('accessToken is required');
-    }
-
     const result = await this.oauth2.createSessionFromAccessToken(
       body.accessToken,
       body.scope,
@@ -180,7 +217,9 @@ export class AuthController {
   }
 
   @Post('oauth2/refresh')
-  async refreshOAuth2Session(@Body() body: OAuth2RefreshRequestBody): Promise<{
+  async refreshOAuth2Session(
+    @Body() body: OAuth2RefreshRequestBodyDto,
+  ): Promise<{
     accessToken: string;
     refreshToken: string | null;
     oauthAccessTokenExpiresIn: number | null;
@@ -193,10 +232,6 @@ export class AuthController {
       name: string | null;
     };
   }> {
-    if (!body.refreshToken || body.refreshToken.length === 0) {
-      throw new BadRequestException('refreshToken is required');
-    }
-
     const result = await this.oauth2.refreshSessionFromRefreshToken(
       body.refreshToken,
     );
@@ -245,7 +280,7 @@ export class AuthController {
   async issueApiKey(
     @Req() req: Request & { user?: GatewayUserIdentity },
     @Param('namespace') namespace: string,
-    @Body() body: ApiKeyRequestBody,
+    @Body() body: ApiKeyRequestBodyDto,
   ): Promise<{
     id: string;
     namespace: string;
@@ -280,7 +315,7 @@ export class AuthController {
   async revokeApiKey(
     @Req() req: Request & { user?: GatewayUserIdentity },
     @Param('namespace') namespace: string,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ): Promise<{ revoked: boolean }> {
     const user = req.user;
     if (!user?.userId) {

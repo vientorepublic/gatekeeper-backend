@@ -1,4 +1,5 @@
 import {
+  HttpException,
   Injectable,
   NestMiddleware,
   NotFoundException,
@@ -67,8 +68,25 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         resolvedRoute.keepVersionPrefix,
       );
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       this.writeUpstreamProblem(error, req.originalUrl || req.url, res);
     }
+  }
+
+  private getMaxRequestBodyBytes(): number {
+    const configuredValue = this.configService.get<unknown>(
+      'gateway.maxProxyRequestBodyBytes',
+      {
+        infer: true,
+      },
+    );
+
+    return typeof configuredValue === 'number' && configuredValue > 0
+      ? configuredValue
+      : 1_048_576;
   }
 
   private async assertGatewayAuthorization(
@@ -113,7 +131,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       keepVersionPrefix,
     );
     const upstreamUrl = new URL(rewrittenPath, target).toString();
-    const body = await readRequestBody(req);
+    const body = await readRequestBody(req, this.getMaxRequestBodyBytes());
 
     const upstreamResponse = await fetch(upstreamUrl, {
       method: req.method,

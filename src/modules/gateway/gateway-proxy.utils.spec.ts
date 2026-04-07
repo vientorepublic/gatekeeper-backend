@@ -4,6 +4,7 @@ import {
   isResolvedRoute,
   readRequestBody,
 } from './gateway-proxy.utils';
+import { PayloadTooLargeException } from '@nestjs/common';
 
 describe('gateway-proxy.utils', () => {
   describe('isResolvedRoute', () => {
@@ -49,6 +50,20 @@ describe('gateway-proxy.utils', () => {
 
       const body = await readRequestBody(req as never);
       expect(body?.toString('utf8')).toBe('hello world');
+    });
+
+    it('throws when request body exceeds configured size limit', async () => {
+      const req = {
+        method: 'POST',
+        *[Symbol.asyncIterator]() {
+          yield Buffer.from('hello');
+          yield Buffer.from('world');
+        },
+      };
+
+      await expect(readRequestBody(req as never, 8)).rejects.toThrow(
+        PayloadTooLargeException,
+      );
     });
   });
 

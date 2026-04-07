@@ -10,6 +10,7 @@ NestJS 기반 API Gateway 서버입니다.
 - 인증: FlowAuth OAuth2 Authorization Code Grant + 내부 JWT + API Key
 - 사용자/API Key 저장: TypeORM + MariaDB
 - 캐시가 필요한 경우 Redis 사용 (REDIS_URL 설정 시 Redis 스토어 사용)
+- 전역 요청 검증: ValidationPipe(`transform`, `whitelist`, `forbidNonWhitelisted`) 적용
 
 ## 환경 변수
 
@@ -18,6 +19,7 @@ NestJS 기반 API Gateway 서버입니다.
 - `PORT`: 서버 포트 (기본 3000)
 - `JWT_HMAC_SECRET`: 내부 JWT 서명 비밀키
 - `JWT_EXPIRES_IN_SECONDS`: 내부 JWT 만료(초)
+- `MAX_PROXY_REQUEST_BODY_BYTES`: 프록시 요청 본문 최대 크기(바이트, 기본 `1048576`)
 - `DB_HOST`: MariaDB 호스트
 - `DB_PORT`: MariaDB 포트
 - `DB_USERNAME`: MariaDB 사용자명
@@ -35,6 +37,15 @@ NestJS 기반 API Gateway 서버입니다.
 - `OAUTH2_REDIRECT_URI`: 인증 콜백 URI
 - `OAUTH2_SCOPES`: 요청 스코프 목록 (콤마 구분)
 - `OAUTH2_ISSUER`, `OAUTH2_AUDIENCE`: 업스트림 전달용 힌트 값
+
+## 입력 검증 및 에러 응답
+
+- 모든 HTTP 요청은 전역 ValidationPipe로 검증됩니다.
+- DTO에 정의되지 않은 필드는 `400 Bad Request`로 거부됩니다.
+- 주요 인증/세션 입력(`code`, `state`, `accessToken`, `refreshToken`, `label`)은 공백 제거 후 길이/필수 조건을 검증합니다.
+- API Key 폐기 엔드포인트의 `:id`는 UUID v4 형식이어야 하며, 형식이 잘못되면 `400 Bad Request`를 반환합니다.
+- 게이트웨이 프록시 본문이 `MAX_PROXY_REQUEST_BODY_BYTES`를 초과하면 `413 Payload Too Large`를 반환합니다.
+- 업스트림 호출 실패는 `502 Bad Gateway`(`application/problem+json`)로 반환됩니다.
 
 ## JWT_HMAC_SECRET 생성 가이드
 
@@ -76,6 +87,23 @@ npm install
 npm run build
 npm run start:dev
 ```
+
+## 테스트
+
+```bash
+# unit tests
+npm test
+
+# e2e tests
+npm run test:e2e
+```
+
+e2e 테스트는 아래 시나리오를 포함합니다.
+
+- 프록시 경로 재작성(`version map`, `direct namespace target`) 검증
+- 인증 실패(헤더 누락/빈 Bearer) 검증
+- 미존재 라우트 매핑(404), 업스트림 장애(502), 본문 크기 초과(413) 검증
+- Auth 입력 DTO 검증(필수값, 미정의 필드 차단, 길이 제한, UUID 파라미터 검증)
 
 ## 요청 예시
 

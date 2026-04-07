@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { PayloadTooLargeException } from '@nestjs/common';
 
 export interface RouteKey {
   namespace: string;
@@ -49,6 +50,7 @@ export function rewritePath(
 
 export async function readRequestBody(
   req: Request,
+  maxBytes = 1_048_576,
 ): Promise<Buffer | undefined> {
   const method = req.method.toUpperCase();
   if (method === 'GET' || method === 'HEAD') {
@@ -56,20 +58,30 @@ export async function readRequestBody(
   }
 
   const chunks: Buffer[] = [];
+  let totalLength = 0;
   for await (const chunk of req) {
+    let normalizedChunk: Buffer | undefined;
+
     if (typeof chunk === 'string') {
-      chunks.push(Buffer.from(chunk));
+      normalizedChunk = Buffer.from(chunk);
+    } else if (Buffer.isBuffer(chunk)) {
+      normalizedChunk = chunk;
+    } else if (chunk instanceof Uint8Array) {
+      normalizedChunk = Buffer.from(chunk);
+    }
+
+    if (!normalizedChunk) {
       continue;
     }
 
-    if (Buffer.isBuffer(chunk)) {
-      chunks.push(chunk);
-      continue;
+    totalLength += normalizedChunk.length;
+    if (maxBytes > 0 && totalLength > maxBytes) {
+      throw new PayloadTooLargeException(
+        `Request body exceeds maximum size of ${maxBytes} bytes`,
+      );
     }
 
-    if (chunk instanceof Uint8Array) {
-      chunks.push(Buffer.from(chunk));
-    }
+    chunks.push(normalizedChunk);
   }
 
   if (chunks.length === 0) {

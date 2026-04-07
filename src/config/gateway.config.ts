@@ -41,13 +41,7 @@ function normalizeRouteMap(value: unknown): RouteMap {
 
 function parseRouteMap(raw?: string): RouteMap {
   if (!raw) {
-    return {
-      orders: {
-        v1: 'http://localhost:4001',
-        v2: 'http://localhost:4003',
-      },
-      billing: 'http://localhost:4002',
-    };
+    throw new Error('ROUTE_MAP environment variable is required');
   }
 
   try {
@@ -109,6 +103,10 @@ function parseCsv(raw: string | undefined, fallback: string[]): string[] {
 export default registerAs('gateway', () => ({
   jwtSecret: process.env.JWT_HMAC_SECRET ?? 'change-me-in-production',
   jwtExpiresInSeconds: parseNumber(process.env.JWT_EXPIRES_IN_SECONDS, 3600),
+  maxProxyRequestBodyBytes: parseNumber(
+    process.env.MAX_PROXY_REQUEST_BODY_BYTES,
+    1_048_576,
+  ),
   routeMap: parseRouteMap(process.env.ROUTE_MAP),
   redisUrl: process.env.REDIS_URL,
   oauth2Issuer: process.env.OAUTH2_ISSUER ?? '',
