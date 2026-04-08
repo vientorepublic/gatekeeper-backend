@@ -22,6 +22,82 @@ import { RouteRegistryService } from '../src/modules/gateway/route-registry.serv
 import { HealthController } from '../src/modules/health/health.controller';
 import { GatewayMetricsService } from '../src/modules/health/gateway-metrics.service';
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+type GatewayMetricsBody = {
+  generatedAt: string;
+  uptimeSeconds: number;
+  proxy: {
+    total: number;
+    upstream2xx: number;
+    gateway5xx: number;
+    payloadTooLarge: number;
+    timeouts: number;
+    circuitOpenRejections: number;
+    inFlight: number;
+    latencyMsAvg: number;
+  };
+  runtime: {
+    memoryRssBytes: number;
+    heapUsedBytes: number;
+    eventLoopLagMsAvg: number;
+  };
+};
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const hasFiniteNumber = (obj: Record<string, unknown>, key: string): boolean =>
+  isFiniteNumber(obj[key]);
+
+const isGatewayMetricsBody = (value: unknown): value is GatewayMetricsBody => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (
+    typeof value.generatedAt !== 'string' ||
+    !hasFiniteNumber(value, 'uptimeSeconds')
+  ) {
+    return false;
+  }
+
+  const proxy = value.proxy;
+  if (!isRecord(proxy)) {
+    return false;
+  }
+
+  const proxyFields = [
+    'total',
+    'upstream2xx',
+    'gateway5xx',
+    'payloadTooLarge',
+    'timeouts',
+    'circuitOpenRejections',
+    'inFlight',
+    'latencyMsAvg',
+  ] as const;
+
+  for (const field of proxyFields) {
+    if (!hasFiniteNumber(proxy, field)) {
+      return false;
+    }
+  }
+
+  const runtime = value.runtime;
+  if (!isRecord(runtime)) {
+    return false;
+  }
+
+  const runtimeFields = [
+    'memoryRssBytes',
+    'heapUsedBytes',
+    'eventLoopLagMsAvg',
+  ] as const;
+  return runtimeFields.every((field) => hasFiniteNumber(runtime, field));
+};
+
 const cacheStore = new Map<string, unknown>();
 
 const cacheManagerMock = {
@@ -369,7 +445,14 @@ describe('Gateway proxy e2e', () => {
       .set('authorization', 'Bearer gk_test_key')
       .expect(502)
       .expect((res) => {
-        expect(res.body.errorCode).toBe('UPSTREAM_TIMEOUT');
+        const responseBody: unknown = res.body;
+
+        expect(isRecord(responseBody)).toBe(true);
+        if (!isRecord(responseBody)) {
+          return;
+        }
+
+        expect(responseBody.errorCode).toBe('UPSTREAM_TIMEOUT');
       });
   });
 
@@ -400,29 +483,14 @@ describe('Gateway proxy e2e', () => {
 
     const response = await request(server).get('/health/metrics').expect(200);
 
-    expect(response.body).toEqual(
-      expect.objectContaining({
-        generatedAt: expect.any(String),
-        uptimeSeconds: expect.any(Number),
-        proxy: expect.objectContaining({
-          total: expect.any(Number),
-          upstream2xx: expect.any(Number),
-          gateway5xx: expect.any(Number),
-          payloadTooLarge: expect.any(Number),
-          timeouts: expect.any(Number),
-          circuitOpenRejections: expect.any(Number),
-          inFlight: expect.any(Number),
-          latencyMsAvg: expect.any(Number),
-        }),
-        runtime: expect.objectContaining({
-          memoryRssBytes: expect.any(Number),
-          heapUsedBytes: expect.any(Number),
-          eventLoopLagMsAvg: expect.any(Number),
-        }),
-      }),
-    );
+    const responseBody: unknown = response.body;
 
-    expect(response.body.proxy.total).toBeGreaterThanOrEqual(1);
+    expect(isGatewayMetricsBody(responseBody)).toBe(true);
+    if (!isGatewayMetricsBody(responseBody)) {
+      return;
+    }
+
+    expect(responseBody.proxy.total).toBeGreaterThanOrEqual(1);
   });
 });
 
