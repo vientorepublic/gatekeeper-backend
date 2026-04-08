@@ -1,6 +1,8 @@
 # Gatekeeper API Gateway
 
-NestJS 기반 API Gateway 서버입니다.
+Gatekeeper 백엔드(NestJS) 저장소입니다.
+
+프로젝트 전반 소개와 멀티 리포지토리 구조는 루트 README를 참고하세요.
 
 ## 핵심 설계
 
