@@ -352,10 +352,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     });
 
     response.status(502);
-    response.setHeader(
-      'content-type',
-      'application/problem+json; charset=utf-8',
-    );
+    response.setHeader('content-type', 'application/json; charset=utf-8');
     response.end(body);
   }
 

@@ -51,7 +51,7 @@ Gatekeeper 백엔드(NestJS) 저장소입니다.
 - 주요 인증/세션 입력(`code`, `state`, `accessToken`, `refreshToken`, `label`)은 공백 제거 후 길이/필수 조건을 검증합니다.
 - API Key 폐기 엔드포인트의 `:id`는 UUID v4 형식이어야 하며, 형식이 잘못되면 `400 Bad Request`를 반환합니다.
 - 게이트웨이 프록시 본문이 `MAX_PROXY_REQUEST_BODY_BYTES`를 초과하면 `413 Payload Too Large`를 반환합니다.
-- 업스트림 호출 실패는 `502 Bad Gateway`(`application/problem+json`)로 반환됩니다.
+- 업스트림 호출 실패는 `502 Bad Gateway`가 반환됩니다.
 - 업스트림 타임아웃은 `502 Bad Gateway` + `errorCode: "UPSTREAM_TIMEOUT"`으로 반환됩니다.
 - 동일 업스트림이 연속 실패 임계값을 넘기면 회로 차단기가 열리고, 냉각 시간 동안 `503 Service Unavailable`을 반환합니다.
 

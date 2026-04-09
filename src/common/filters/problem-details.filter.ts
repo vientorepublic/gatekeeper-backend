@@ -72,10 +72,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     };
 
     response.status(status);
-    response.setHeader(
-      'content-type',
-      'application/problem+json; charset=utf-8',
-    );
+    response.setHeader('content-type', 'application/json; charset=utf-8');
     response.json(problem);
   }
 }
