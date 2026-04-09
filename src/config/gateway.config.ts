@@ -136,7 +136,8 @@ export default registerAs('gateway', () => ({
     password: process.env.DB_PASSWORD ?? '',
     database: process.env.DB_NAME ?? 'gatekeeper',
     charset: process.env.DB_CHARSET ?? 'utf8mb4',
-    synchronize: parseBoolean(process.env.DB_SYNCHRONIZE, true),
+    synchronize: parseBoolean(process.env.DB_SYNCHRONIZE, false),
+    migrationsRun: parseBoolean(process.env.DB_MIGRATIONS_RUN, true),
     logging: parseBoolean(process.env.DB_LOGGING, false),
   },
 }));

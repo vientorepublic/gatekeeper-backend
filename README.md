@@ -31,7 +31,8 @@ Gatekeeper 백엔드(NestJS) 저장소입니다.
 - `DB_PASSWORD`: MariaDB 비밀번호
 - `DB_NAME`: MariaDB 데이터베이스명
 - `DB_CHARSET`: MariaDB 문자셋 (기본 `utf8mb4`)
-- `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부
+- `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부 (기본 `false` 권장)
+- `DB_MIGRATIONS_RUN`: 서버 시작 시 미적용 마이그레이션 자동 실행 여부 (기본 `true`)
 - `DB_LOGGING`: SQL 로깅 여부
 - `ROUTE_MAP`: 업스트림 매핑 JSON (`/api/{namespace}/{version}`에 매핑)
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)

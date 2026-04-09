@@ -19,6 +19,7 @@ import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
 import { RouteRegistryService } from './modules/gateway/route-registry.service';
 import { GracefulShutdownService } from './common/lifecycle/graceful-shutdown.service';
 import { GatewayMetricsService } from './modules/health/gateway-metrics.service';
+import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-initial-auth-schema.migration';
 
 @Module({
   imports: [
@@ -46,6 +47,9 @@ import { GatewayMetricsService } from './modules/health/gateway-metrics.service'
         const synchronizeValue = configService.get<unknown>(
           'gateway.database.synchronize',
         );
+        const migrationsRunValue = configService.get<unknown>(
+          'gateway.database.migrationsRun',
+        );
         const loggingValue = configService.get<unknown>(
           'gateway.database.logging',
         );
@@ -63,6 +67,8 @@ import { GatewayMetricsService } from './modules/health/gateway-metrics.service'
           typeof charsetValue === 'string' ? charsetValue : 'utf8mb4';
         const synchronize =
           typeof synchronizeValue === 'boolean' ? synchronizeValue : true;
+        const migrationsRun =
+          typeof migrationsRunValue === 'boolean' ? migrationsRunValue : true;
         const logging =
           typeof loggingValue === 'boolean' ? loggingValue : false;
 
@@ -75,6 +81,8 @@ import { GatewayMetricsService } from './modules/health/gateway-metrics.service'
           database,
           charset,
           entities: [UserEntity, ApiKeyEntity],
+          migrations: [InitialAuthSchema20260409000000],
+          migrationsRun,
           synchronize,
           logging,
         };
