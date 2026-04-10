@@ -109,7 +109,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         throw error;
       }
 
-      this.gatewayMetricsService.recordGatewayHttpStatus(502);
+      this.gatewayMetricsService.recordGatewayHttpStatus(500);
       this.writeUpstreamProblem(error, req.originalUrl || req.url, res);
     } finally {
       this.gatewayMetricsService.recordRequestFinished(Date.now() - startedAt);
@@ -342,17 +342,20 @@ export class GatewayProxyMiddleware implements NestMiddleware {
 
     const errorCode = getProxyErrorCode(error);
     const instance = requestUrl && requestUrl.length > 0 ? requestUrl : '/';
-    const title = STATUS_CODES[502] ?? 'Bad Gateway';
+    const title = STATUS_CODES[500] ?? 'Internal Server Error';
     const body = JSON.stringify({
       title,
-      status: 502,
+      status: 500,
       detail: 'Failed to receive response from upstream service.',
       instance,
       errorCode,
     });
 
-    response.status(502);
-    response.setHeader('content-type', 'application/json; charset=utf-8');
+    response.status(500);
+    response.setHeader(
+      'content-type',
+      'application/problem+json; charset=utf-8',
+    );
     response.end(body);
   }
 

@@ -401,14 +401,14 @@ describe('Gateway proxy e2e', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('returns 502 when upstream request fails', async () => {
+  it('returns 500 when upstream request fails', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
     fetchSpy.mockRejectedValueOnce(new Error('connection refused'));
 
     await request(server)
       .get('/api/hashguard/v1/health')
       .set('authorization', 'Bearer gk_test_key')
-      .expect(502)
+      .expect(500)
       .expect('content-type', /application\/problem\+json/);
   });
 
@@ -425,7 +425,7 @@ describe('Gateway proxy e2e', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('returns 502 with timeout error code when upstream fetch is aborted', async () => {
+  it('returns 500 with timeout error code when upstream fetch is aborted', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
     fetchSpy.mockImplementationOnce(
       (_input: string | URL | globalThis.Request, init?: RequestInit) => {
@@ -443,7 +443,7 @@ describe('Gateway proxy e2e', () => {
     await request(server)
       .get('/api/unstable/v1/health')
       .set('authorization', 'Bearer gk_test_key')
-      .expect(502)
+      .expect(500)
       .expect((res) => {
         const responseBody: unknown = res.body;
 
@@ -463,12 +463,12 @@ describe('Gateway proxy e2e', () => {
     await request(server)
       .get('/api/breaker/v1/health')
       .set('authorization', 'Bearer gk_test_key')
-      .expect(502);
+      .expect(500);
 
     await request(server)
       .get('/api/breaker/v1/health')
       .set('authorization', 'Bearer gk_test_key')
-      .expect(502);
+      .expect(500);
 
     await request(server)
       .get('/api/breaker/v1/health')
