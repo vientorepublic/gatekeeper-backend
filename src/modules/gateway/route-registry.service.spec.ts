@@ -1,3 +1,4 @@
+import { describe, expect, it, jest } from '@jest/globals';
 import { RouteRegistryService } from './route-registry.service';
 import type { RouteMap } from '../../common/types/gateway.types';
 
