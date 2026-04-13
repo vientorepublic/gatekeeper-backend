@@ -15,7 +15,6 @@ interface ProxyStatusCounts {
 
 export interface GatewayMetricsSnapshot {
   generatedAt: string;
-  uptimeSeconds: number;
   proxy: ProxyStatusCounts & {
     inFlight: number;
     latencyMsAvg: number;
@@ -118,12 +117,14 @@ export class GatewayMetricsService {
     const lagAvg =
       this.lagSamplesMs.length === 0
         ? 0
-        : this.lagSamplesMs.reduce((sum, item) => sum + item, 0) /
-          this.lagSamplesMs.length;
+        : Math.round(
+            (this.lagSamplesMs.reduce((sum, item) => sum + item, 0) /
+              this.lagSamplesMs.length) *
+              100,
+          ) / 100;
 
     return {
       generatedAt: new Date().toISOString(),
-      uptimeSeconds: Math.round((Date.now() - this.startedAt) / 1_000),
       proxy: {
         ...this.counts,
         inFlight: this.inFlight,

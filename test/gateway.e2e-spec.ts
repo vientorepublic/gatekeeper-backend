@@ -37,7 +37,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 type GatewayMetricsBody = {
   generatedAt: string;
-  uptimeSeconds: number;
   proxy: {
     total: number;
     upstream2xx: number;
@@ -66,10 +65,7 @@ const isGatewayMetricsBody = (value: unknown): value is GatewayMetricsBody => {
     return false;
   }
 
-  if (
-    typeof value.generatedAt !== 'string' ||
-    !hasFiniteNumber(value, 'uptimeSeconds')
-  ) {
+  if (typeof value.generatedAt !== 'string') {
     return false;
   }
 

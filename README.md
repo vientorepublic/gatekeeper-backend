@@ -135,7 +135,6 @@ e2e 테스트는 아래 시나리오를 포함합니다.
 ```json
 {
   "generatedAt": "2026-04-07T10:10:00.000Z",
-  "uptimeSeconds": 123,
   "proxy": {
     "total": 4123,
     "upstream2xx": 3900,

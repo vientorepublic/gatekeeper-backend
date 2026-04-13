@@ -4,7 +4,6 @@ export interface HealthCheckResponseDto {
 
 export interface HealthMetricsResponseDto {
   generatedAt: string;
-  uptimeSeconds: number;
   proxy: {
     total: number;
     upstream2xx: number;
