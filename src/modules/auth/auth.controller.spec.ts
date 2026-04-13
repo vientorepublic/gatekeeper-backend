@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { describe, expect, it } from '@jest/globals';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
