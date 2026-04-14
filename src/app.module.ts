@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import Keyv from 'keyv';
 import KeyvRedis from '@keyv/redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import gatewayConfig from './config/gateway.config';
 import { GatewayController } from './modules/gateway/gateway.controller';
 import { GatewayProxyMiddleware } from './modules/gateway/gateway-proxy.middleware';
@@ -18,7 +19,8 @@ import { UserEntity } from './modules/auth/entities/user.entity';
 import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
 import { RouteRegistryService } from './modules/gateway/route-registry.service';
 import { GracefulShutdownService } from './common/lifecycle/graceful-shutdown.service';
-import { GatewayMetricsService } from './modules/health/gateway-metrics.service';
+import { HealthMetricsModule } from './modules/health/health-metrics.module';
+import { CronJobsModule } from './modules/cron/cron-jobs.module';
 import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-initial-auth-schema.migration';
 
 @Module({
@@ -27,6 +29,9 @@ import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-ini
       isGlobal: true,
       load: [gatewayConfig],
     }),
+    ScheduleModule.forRoot(),
+    HealthMetricsModule,
+    CronJobsModule,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
@@ -135,7 +140,6 @@ import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-ini
     ApiKeysService,
     GracefulShutdownService,
     GatewayProxyMiddleware,
-    GatewayMetricsService,
   ],
 })
 export class AppModule implements NestModule {
