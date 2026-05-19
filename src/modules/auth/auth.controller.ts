@@ -123,8 +123,8 @@ export class AuthController {
             : {
                 namespace,
                 supportsAnyVersion: false,
-                versions: Object.keys(entry).sort((left, right) =>
-                  left.localeCompare(right),
+                versions: Object.keys(entry as Record<string, unknown>).sort(
+                  (left, right) => left.localeCompare(right),
                 ),
               };
 

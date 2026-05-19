@@ -15,6 +15,101 @@ describe('JwtAuthGuard', () => {
     } as ExecutionContext;
   }
 
+  it('skips auth for public namespace gateway requests', async () => {
+    const routeMap = {
+      'public-api': {
+        versions: { v1: 'http://public.internal' },
+        public: true,
+      },
+    };
+
+    const guard = new JwtAuthGuard(
+      {
+        get: jest.fn((key: string) =>
+          key === 'gateway.routeMap' ? routeMap : undefined,
+        ),
+      } as never,
+      { toIdentity: jest.fn() } as never,
+      { authenticateApiKey: jest.fn() } as never,
+    );
+
+    const context = createContext({
+      headers: {},
+      params: {
+        namespace: 'public-api',
+        version: 'v1',
+      },
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  it('skips auth when request path matches a publicPaths rule', async () => {
+    const routeMap = {
+      api: {
+        versions: { v1: 'http://api.internal' },
+        publicPaths: [{ path: '/users/register', methods: ['POST'] }],
+      },
+    };
+
+    const guard = new JwtAuthGuard(
+      {
+        get: jest.fn((key: string) =>
+          key === 'gateway.routeMap' ? routeMap : undefined,
+        ),
+      } as never,
+      { toIdentity: jest.fn() } as never,
+      { authenticateApiKey: jest.fn() } as never,
+    );
+
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          headers: {},
+          params: { namespace: 'api', version: 'v1' },
+          url: '/api/api/v1/users/register',
+          method: 'POST',
+        }),
+      }),
+    } as ExecutionContext;
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  it('requires auth when request path does not match publicPaths rule method', async () => {
+    const routeMap = {
+      api: {
+        versions: { v1: 'http://api.internal' },
+        publicPaths: [{ path: '/users/register', methods: ['POST'] }],
+      },
+    };
+
+    const guard = new JwtAuthGuard(
+      {
+        get: jest.fn((key: string) =>
+          key === 'gateway.routeMap' ? routeMap : undefined,
+        ),
+      } as never,
+      { toIdentity: jest.fn() } as never,
+      { authenticateApiKey: jest.fn() } as never,
+    );
+
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          headers: {},
+          params: { namespace: 'api', version: 'v1' },
+          url: '/api/api/v1/users/register',
+          method: 'GET',
+        }),
+      }),
+    } as ExecutionContext;
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
   it('requires Bearer API key for gateway forwarding requests', async () => {
     const guard = new JwtAuthGuard(
       { get: jest.fn() } as never,

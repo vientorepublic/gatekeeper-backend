@@ -1,8 +1,37 @@
 import { registerAs } from '@nestjs/config';
-import type { RouteMap } from '../common/types/gateway.types';
+import type { PublicPathRule, RouteMap } from '../common/types/gateway.types';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function normalizePublicPath(
+  entry: unknown,
+  namespace: string,
+  index: number,
+): PublicPathRule {
+  if (typeof entry === 'string') {
+    if (entry.length === 0) {
+      throw new Error(
+        `ROUTE_MAP publicPaths[${index}] for "${namespace}" must be a non-empty string`,
+      );
+    }
+    return { path: entry };
+  }
+
+  if (isRecord(entry) && typeof entry['path'] === 'string') {
+    const rule: PublicPathRule = { path: entry['path'] };
+    if (Array.isArray(entry['methods'])) {
+      rule.methods = (entry['methods'] as unknown[])
+        .filter((m): m is string => typeof m === 'string')
+        .map((m) => m.toUpperCase());
+    }
+    return rule;
+  }
+
+  throw new Error(
+    `ROUTE_MAP publicPaths[${index}] for "${namespace}" must be a string or { path, methods? } object`,
+  );
 }
 
 function normalizeRouteMap(value: unknown): RouteMap {
@@ -22,6 +51,33 @@ function normalizeRouteMap(value: unknown): RouteMap {
       throw new Error(`ROUTE_MAP namespace "${namespace}" must be an object`);
     }
 
+    // New versioned format: { versions: { v1: "http://..." }, public?: true, publicPaths?: [...] }
+    if ('versions' in routeValue && isRecord(routeValue['versions'])) {
+      const isPublicRoute = routeValue['public'] === true;
+      const versionMap: Record<string, string> = {};
+      for (const [version, target] of Object.entries(routeValue['versions'])) {
+        if (typeof target !== 'string') {
+          throw new Error(
+            `ROUTE_MAP target for "${namespace}.${version}" must be a string URL`,
+          );
+        }
+        versionMap[version] = target;
+      }
+      const rawPublicPaths = routeValue['publicPaths'];
+      const publicPaths: PublicPathRule[] = Array.isArray(rawPublicPaths)
+        ? rawPublicPaths.map((entry, i) =>
+            normalizePublicPath(entry, namespace, i),
+          )
+        : [];
+      normalized[namespace] = {
+        versions: versionMap,
+        public: isPublicRoute,
+        publicPaths,
+      };
+      continue;
+    }
+
+    // Legacy format: flat version map { v1: "http://...", v2: "http://..." }
     const versionMap: Record<string, string> = {};
     for (const [version, target] of Object.entries(routeValue)) {
       if (typeof target !== 'string') {

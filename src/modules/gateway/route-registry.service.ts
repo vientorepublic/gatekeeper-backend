@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Cache } from 'cache-manager';
 import type { ResolvedRoute, RouteMap } from '../../common/types/gateway.types';
+import { isVersionedNamespaceRoute } from '../../common/utils/gateway-route.utils';
 
 @Injectable()
 export class RouteRegistryService {
@@ -27,20 +28,39 @@ export class RouteRegistryService {
       return undefined;
     }
 
-    const resolved =
-      typeof namespaceEntry === 'string'
-        ? { target: namespaceEntry, keepVersionPrefix: true }
-        : (() => {
-            const target = namespaceEntry[version];
-            if (!target) {
-              return undefined;
-            }
+    let resolved: ResolvedRoute | undefined;
 
-            return {
-              target,
-              keepVersionPrefix: false,
-            } satisfies ResolvedRoute;
-          })();
+    if (typeof namespaceEntry === 'string') {
+      resolved = {
+        target: namespaceEntry,
+        keepVersionPrefix: true,
+        isPublic: false,
+        publicPaths: [],
+      };
+    } else if (isVersionedNamespaceRoute(namespaceEntry)) {
+      const target = namespaceEntry.versions[version];
+      if (!target) {
+        return undefined;
+      }
+      resolved = {
+        target,
+        keepVersionPrefix: false,
+        isPublic: namespaceEntry.public === true,
+        publicPaths: namespaceEntry.publicPaths ?? [],
+      };
+    } else {
+      // Legacy flat version map
+      const target = namespaceEntry[version];
+      if (!target) {
+        return undefined;
+      }
+      resolved = {
+        target,
+        keepVersionPrefix: false,
+        isPublic: false,
+        publicPaths: [],
+      };
+    }
 
     if (resolved) {
       await this.cacheManager.set(cacheKey, resolved, 60_000);

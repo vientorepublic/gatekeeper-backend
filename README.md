@@ -34,7 +34,7 @@ Gatekeeper 백엔드(NestJS) 저장소입니다.
 - `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부 (기본 `false` 권장)
 - `DB_MIGRATIONS_RUN`: 서버 시작 시 미적용 마이그레이션 자동 실행 여부 (기본 `true`)
 - `DB_LOGGING`: SQL 로깅 여부
-- `ROUTE_MAP`: 업스트림 매핑 JSON (`/api/{namespace}/{version}`에 매핑)
+- `ROUTE_MAP`: 업스트림 매핑 JSON — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
 - `CORS_ORIGINS`: 허용할 브라우저 오리진 목록 (콤마 구분)
 - `OAUTH2_SERVER`: FlowAuth 서버 URL
@@ -73,20 +73,107 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
 
 생성한 값을 `.env`의 `JWT_HMAC_SECRET`에 설정합니다.
 
-예시 `ROUTE_MAP`:
+## ROUTE_MAP 설정
+
+`ROUTE_MAP` 환경 변수는 JSON 객체이며, 키는 namespace 이름입니다.  
+엔트리 형식은 세 가지를 지원합니다.
+
+### 1. 문자열 타겟 (버전 프리픽스 유지)
+
+```json
+{
+  "billing": "http://billing.internal"
+}
+```
+
+`/api/billing/v1/invoices` → `http://billing.internal/v1/invoices`  
+`/{namespace}`만 제거되고 `/{version}/...`는 업스트림에 그대로 전달됩니다.
+
+### 2. 레거시 플랫 버전 맵
 
 ```json
 {
   "orders": {
-    "v1": "http://localhost:4001",
-    "v2": "http://localhost:4003"
-  },
-  "billing": "http://localhost:4002"
+    "v1": "http://orders-v1.internal",
+    "v2": "http://orders-v2.internal"
+  }
 }
 ```
 
-- 버전 맵을 정의한 경우: `/api/{namespace}/{version}/...`에서 `/{namespace}/{version}`가 제거되어 전달됩니다.
-- 버전을 생략한 경우(문자열 대상): `/api/{namespace}/{version}/...`에서 `/{namespace}`만 제거되어 `/{version}/...` 경로가 업스트림으로 전달됩니다.
+`/api/orders/v1/items` → `http://orders-v1.internal/items`  
+`/{namespace}/{version}`이 제거되어 전달됩니다.
+
+### 3. 버전 맵 + 퍼블릭 설정 (권장)
+
+```json
+{
+  "catalog": {
+    "versions": {
+      "v1": "http://catalog.internal"
+    },
+    "public": true
+  }
+}
+```
+
+`public: true`로 설정하면 해당 namespace의 **모든 경로**가 Bearer 토큰 검증을 건너뜁니다.
+
+### 4. 경로 수준 퍼블릭 설정 (`publicPaths`)
+
+네임스페이스 내 **특정 경로/메서드만** 인증을 우회하도록 지정할 수 있습니다.
+
+```json
+{
+  "hashguard": {
+    "versions": {
+      "v1": "http://hashguard.internal"
+    },
+    "publicPaths": [
+      "/health",
+      { "path": "/users/register", "methods": ["POST"] },
+      { "path": "/docs/*" }
+    ]
+  }
+}
+```
+
+#### `publicPaths` 규칙 형식
+
+| 형식                      | 예시                                                 | 설명                                   |
+| ------------------------- | ---------------------------------------------------- | -------------------------------------- |
+| 문자열                    | `"/health"`                                          | 해당 경로에 모든 메서드 허용           |
+| 객체 (`path`만)           | `{ "path": "/ping" }`                                | 해당 경로에 모든 메서드 허용           |
+| 객체 (`path` + `methods`) | `{ "path": "/users/register", "methods": ["POST"] }` | 지정 메서드만 허용, 나머지는 인증 필요 |
+| 와일드카드 접미사         | `{ "path": "/docs/*" }`                              | `/docs/` 및 하위 경로 전체 허용        |
+
+- `path`는 namespace 루트(`/api/{namespace}/{version}`) 기준 상대 경로입니다.
+- `methods`를 생략하면 모든 HTTP 메서드에 적용됩니다. 값은 대소문자 구분 없이 처리됩니다.
+- `/*` 접미사: `/docs/*`는 `/docs`(정확히 일치), `/docs/`, `/docs/anything`에 모두 매칭됩니다.
+- `public: true`와 `publicPaths`를 동시에 지정하면 `public: true`가 우선됩니다.
+
+### 전체 예시
+
+```json
+{
+  "billing": "http://billing.internal",
+  "orders": {
+    "v1": "http://orders-v1.internal",
+    "v2": "http://orders-v2.internal"
+  },
+  "open-api": {
+    "versions": { "v1": "http://open-api.internal" },
+    "public": true
+  },
+  "hashguard": {
+    "versions": { "v1": "http://hashguard.internal" },
+    "publicPaths": [
+      "/health",
+      { "path": "/users/register", "methods": ["POST"] },
+      { "path": "/docs/*" }
+    ]
+  }
+}
+```
 
 ## 실행
 
