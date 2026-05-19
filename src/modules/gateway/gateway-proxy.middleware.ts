@@ -264,9 +264,6 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     }, this.proxyTimeoutMs);
 
     const shouldForwardBody = this.isRequestBodyAllowed(req.method);
-    const requestBody = shouldForwardBody
-      ? req.pipe(this.createLimitedRequestBodyStream(req))
-      : undefined;
 
     const contentLengthHeader = req.headers['content-length'];
     if (shouldForwardBody && typeof contentLengthHeader === 'string') {
@@ -281,14 +278,29 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       }
     }
 
+    const rawBodyReq = req as Request & { rawBody?: Buffer };
+    const rawBody = shouldForwardBody ? rawBodyReq.rawBody : undefined;
+    if (rawBody !== undefined && rawBody.length > this.maxRequestBodyBytes) {
+      throw new PayloadTooLargeException(
+        `Request body exceeds maximum size of ${this.maxRequestBodyBytes} bytes`,
+      );
+    }
+    const requestBody: BodyInit | undefined = shouldForwardBody
+      ? ((rawBody as unknown as BodyInit | undefined) ??
+        (req.pipe(
+          this.createLimitedRequestBodyStream(req),
+        ) as unknown as BodyInit))
+      : undefined;
+    const isStreamBody = shouldForwardBody && rawBody === undefined;
+
     try {
       const requestInit: RequestInit & { duplex?: 'half' } = {
         method: req.method,
         headers: buildUpstreamHeaders(req, this.oauth2IssuerHint),
-        body: requestBody as unknown as BodyInit,
+        body: requestBody,
         redirect: 'manual',
         signal: timeoutController.signal,
-        duplex: shouldForwardBody ? 'half' : undefined,
+        duplex: isStreamBody ? 'half' : undefined,
       };
 
       const upstreamResponse = await fetch(upstreamUrl, requestInit);
