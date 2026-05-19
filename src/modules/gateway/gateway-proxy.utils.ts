@@ -1,13 +1,17 @@
 import type { Request } from 'express';
+import type { PublicPathRule } from '../../common/types/gateway.types';
 
 export interface RouteKey {
   namespace: string;
   version: string;
 }
 
-export function isResolvedRoute(
-  value: unknown,
-): value is { target: string; keepVersionPrefix: boolean } {
+export function isResolvedRoute(value: unknown): value is {
+  target: string;
+  keepVersionPrefix: boolean;
+  isPublic: boolean;
+  publicPaths: PublicPathRule[];
+} {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
@@ -15,12 +19,56 @@ export function isResolvedRoute(
   const candidate = value as {
     target?: unknown;
     keepVersionPrefix?: unknown;
+    isPublic?: unknown;
+    publicPaths?: unknown;
   };
 
   return (
     typeof candidate.target === 'string' &&
-    typeof candidate.keepVersionPrefix === 'boolean'
+    typeof candidate.keepVersionPrefix === 'boolean' &&
+    typeof candidate.isPublic === 'boolean' &&
+    Array.isArray(candidate.publicPaths)
   );
+}
+
+/**
+ * Returns true when the given tail path and HTTP method match any of the public path rules.
+ *
+ * Path patterns:
+ *  - `/health`   – exact match (trailing slash ignored)
+ *  - `/docs/*`   – prefix match: matches `/docs/` and anything beneath it
+ */
+export function matchesPublicPath(
+  rules: PublicPathRule[],
+  tailPath: string,
+  method: string,
+): boolean {
+  const rawPath = (tailPath.split('?')[0] ?? '/') || '/';
+  // Normalize to always start with '/' — parseProxyPath strips the leading slash
+  // when splitting URL segments, but rule paths are written with a leading slash.
+  const pathWithoutQuery = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+  const upperMethod = method.toUpperCase();
+
+  return rules.some((rule) => {
+    if (
+      rule.methods &&
+      rule.methods.length > 0 &&
+      !rule.methods.map((m) => m.toUpperCase()).includes(upperMethod)
+    ) {
+      return false;
+    }
+
+    if (rule.path.endsWith('/*')) {
+      const prefix = rule.path.slice(0, -2);
+      return (
+        pathWithoutQuery === prefix || pathWithoutQuery.startsWith(prefix + '/')
+      );
+    }
+
+    const normalizedRule = rule.path.replace(/\/$/, '');
+    const normalizedPath = pathWithoutQuery.replace(/\/$/, '');
+    return normalizedPath === normalizedRule;
+  });
 }
 
 export function extractRouteKey(path: string): RouteKey | undefined {

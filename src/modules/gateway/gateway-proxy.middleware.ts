@@ -18,6 +18,7 @@ import {
   buildUpstreamHeaders,
   getProxyErrorCode,
   isResolvedRoute,
+  matchesPublicPath,
 } from './gateway-proxy.utils';
 
 interface ResolvedRequestRoute {
@@ -83,8 +84,6 @@ export class GatewayProxyMiddleware implements NestMiddleware {
 
       const { namespace, version } = proxyPath;
 
-      await this.assertGatewayAuthorization(req, namespace);
-
       const resolvedRoute = await this.routeRegistry.getTarget(
         namespace,
         version,
@@ -93,6 +92,17 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         throw new NotFoundException(
           `No upstream route found for namespace "${namespace}" and version "${version}".`,
         );
+      }
+
+      if (
+        !resolvedRoute.isPublic &&
+        !matchesPublicPath(
+          resolvedRoute.publicPaths,
+          proxyPath.tailPath,
+          req.method,
+        )
+      ) {
+        await this.assertGatewayAuthorization(req, namespace);
       }
 
       await this.forwardToUpstream(
