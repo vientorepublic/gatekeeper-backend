@@ -36,7 +36,6 @@ Gatekeeper 백엔드(NestJS) 저장소입니다.
 - `DB_LOGGING`: SQL 로깅 여부
 - `ROUTE_MAP`: 업스트림 매핑 JSON — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
-- `CORS_ORIGINS`: 허용할 브라우저 오리진 목록 (콤마 구분)
 - `OAUTH2_SERVER`: FlowAuth 서버 URL
 - `OAUTH2_CLIENT_ID`: OAuth2 클라이언트 ID
 - `OAUTH2_CLIENT_SECRET`: OAuth2 클라이언트 시크릿
