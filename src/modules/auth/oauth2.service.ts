@@ -1,11 +1,11 @@
 import {
   BadGatewayException,
   BadRequestException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { sign } from 'jsonwebtoken';
 import type { Cache } from 'cache-manager';
@@ -240,11 +240,8 @@ export class Oauth2Service {
         ? rawExpiresIn
         : 3600;
 
-    const rawDefaultScope = this.configService.get<unknown>(
-      'gateway.oauth2.defaultScope',
-    );
     const defaultScope =
-      typeof rawDefaultScope === 'string' ? rawDefaultScope : '';
+      this.configService.get<string>('gateway.oauth2.defaultScope') ?? '';
     const scope = typeof scopeClaim === 'string' ? scopeClaim : defaultScope;
 
     return sign(
@@ -263,29 +260,12 @@ export class Oauth2Service {
   }
 
   private getScopes(): OAuth2Scope[] {
-    const configuredScopes = this.configService.get<unknown>(
-      'gateway.oauth2.scopes',
-    );
-
-    if (Array.isArray(configuredScopes)) {
-      if (configuredScopes.length === 0) {
-        return [OAuth2Scope.OPENID, OAuth2Scope.PROFILE];
-      }
-
-      return configuredScopes
-        .filter((scope): scope is string => typeof scope === 'string')
-        .map((scope) => scope as OAuth2Scope);
-    }
-
-    if (typeof configuredScopes !== 'string') {
+    const scopes =
+      this.configService.get<string[]>('gateway.oauth2.scopes') ?? [];
+    if (scopes.length === 0) {
       return [OAuth2Scope.OPENID, OAuth2Scope.PROFILE];
     }
-
-    return configuredScopes
-      .split(',')
-      .map((scope) => scope.trim())
-      .filter((scope) => scope.length > 0)
-      .map((scope) => scope as OAuth2Scope);
+    return scopes as OAuth2Scope[];
   }
 
   private createClient(): FlowAuthClient {

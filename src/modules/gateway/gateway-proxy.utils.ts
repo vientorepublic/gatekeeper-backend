@@ -117,6 +117,7 @@ export function buildUpstreamHeaders(
   headers.delete('content-length');
   headers.delete('authorization');
   headers.delete('x-api-key');
+  headers.delete('cookie');
 
   if (issuerHint) {
     headers.set('x-oauth2-issuer-hint', issuerHint);

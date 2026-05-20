@@ -2,7 +2,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ProblemDetailsFilter } from './common/filters/problem-details.filter';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { ConfigService } from '@nestjs/config';
 import { Logger, ValidationPipe } from '@nestjs/common';
+import { createCorsMiddleware } from './common/middleware/cors.middleware';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -14,7 +16,21 @@ async function bootstrap() {
 
   app.disable('x-powered-by');
 
-  app.enableCors();
+  const configService = app.get(ConfigService);
+
+  const jwtSecret = configService.get<string>('gateway.jwtSecret');
+  if (jwtSecret === 'change-me-in-production') {
+    logger.warn(
+      'JWT_HMAC_SECRET is set to the default insecure value. ' +
+        'Set JWT_HMAC_SECRET to a strong random secret before deploying to production.',
+    );
+  }
+
+  const corsOrigins = configService.get<string[]>('gateway.corsOrigins') ?? [
+    'http://localhost:5173',
+  ];
+
+  app.use(createCorsMiddleware(corsOrigins));
 
   app.useGlobalPipes(
     new ValidationPipe({

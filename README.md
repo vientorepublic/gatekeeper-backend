@@ -18,30 +18,32 @@ Gatekeeper 백엔드(NestJS) 저장소입니다.
 
 `.env.example`를 참고하세요.
 
-- `PORT`: 서버 포트 (기본 3000)
-- `JWT_HMAC_SECRET`: 내부 JWT 서명 비밀키
-- `JWT_EXPIRES_IN_SECONDS`: 내부 JWT 만료(초)
+- `PORT`: 서버 포트 (기본 `3000`)
+- `JWT_HMAC_SECRET`: 내부 JWT 서명 비밀키 (**필수** — 운영 환경에서 반드시 강한 랜덤 값으로 설정)
+- `JWT_EXPIRES_IN_SECONDS`: 내부 JWT 만료(초, 기본 `3600`)
 - `MAX_PROXY_REQUEST_BODY_BYTES`: 프록시 요청 본문 최대 크기(바이트, 기본 `1048576`)
 - `PROXY_TIMEOUT_MS`: 업스트림 프록시 타임아웃(밀리초, 기본 `15000`)
 - `PROXY_CIRCUIT_BREAKER_FAILURE_THRESHOLD`: 회로 차단기 연속 실패 임계값(기본 `3`)
 - `PROXY_CIRCUIT_BREAKER_COOLDOWN_MS`: 회로 차단기 재시도 대기 시간(밀리초, 기본 `10000`)
-- `DB_HOST`: MariaDB 호스트
-- `DB_PORT`: MariaDB 포트
-- `DB_USERNAME`: MariaDB 사용자명
+- `DB_HOST`: MariaDB 호스트 (기본 `127.0.0.1`)
+- `DB_PORT`: MariaDB 포트 (기본 `3306`)
+- `DB_USERNAME`: MariaDB 사용자명 (기본 `gatekeeper`)
 - `DB_PASSWORD`: MariaDB 비밀번호
-- `DB_NAME`: MariaDB 데이터베이스명
+- `DB_NAME`: MariaDB 데이터베이스명 (기본 `gatekeeper`)
 - `DB_CHARSET`: MariaDB 문자셋 (기본 `utf8mb4`)
 - `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부 (기본 `false` 권장)
 - `DB_MIGRATIONS_RUN`: 서버 시작 시 미적용 마이그레이션 자동 실행 여부 (기본 `true`)
-- `DB_LOGGING`: SQL 로깅 여부
-- `ROUTE_MAP`: 업스트림 매핑 JSON — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
+- `DB_LOGGING`: SQL 로깅 여부 (기본 `false`)
+- `ROUTE_MAP`: 업스트림 매핑 JSON (**필수**) — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
+- `CORS_ORIGINS`: 게이트웨이 자체 엔드포인트(`/health`, `/auth/...`)에 허용할 Origin 목록 (콤마 구분, 기본 `http://localhost:5173`) — 게이트웨이 프록시 경로(`/api/...`)는 항상 전체 개방
 - `OAUTH2_SERVER`: FlowAuth 서버 URL
 - `OAUTH2_CLIENT_ID`: OAuth2 클라이언트 ID
 - `OAUTH2_CLIENT_SECRET`: OAuth2 클라이언트 시크릿
 - `OAUTH2_REDIRECT_URI`: 인증 콜백 URI
-- `OAUTH2_SCOPES`: 요청 스코프 목록 (콤마 구분)
-- `OAUTH2_ISSUER`, `OAUTH2_AUDIENCE`: 업스트림 전달용 힌트 값
+- `OAUTH2_SCOPES`: 요청 스코프 목록 (콤마 구분, 기본 `openid,profile`)
+- `OAUTH2_ISSUER`: 업스트림 전달용 발급자 힌트 값
+- `OAUTH2_AUDIENCE`: 업스트림 전달용 대상자 힌트 값
 
 ## 입력 검증 및 에러 응답
 
