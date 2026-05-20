@@ -1,6 +1,18 @@
 import { registerAs } from '@nestjs/config';
 import type { PublicPathRule, RouteMap } from '../common/types/gateway.types';
 
+export interface DatabaseConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  database: string;
+  charset: string;
+  synchronize: boolean;
+  migrationsRun: boolean;
+  logging: boolean;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -103,8 +115,8 @@ function parseRouteMap(raw?: string): RouteMap {
   try {
     const parsed = JSON.parse(raw) as unknown;
     return normalizeRouteMap(parsed);
-  } catch {
-    throw new Error('Invalid ROUTE_MAP JSON format');
+  } catch (err) {
+    throw new Error(`Invalid ROUTE_MAP: ${String(err)}`, { cause: err });
   }
 }
 
@@ -182,7 +194,7 @@ export default registerAs('gateway', () => ({
     clientSecret: process.env.OAUTH2_CLIENT_SECRET ?? '',
     redirectUri: process.env.OAUTH2_REDIRECT_URI ?? '',
     scopes: parseScopes(process.env.OAUTH2_SCOPES),
-    defaultScope: process.env.OAUTH2_SCOPES ?? 'openid,profile',
+    defaultScope: parseScopes(process.env.OAUTH2_SCOPES).join(' '),
   },
   corsOrigins: parseCsv(process.env.CORS_ORIGINS, ['http://localhost:5173']),
   database: {

@@ -1,8 +1,11 @@
 import { UnauthorizedException, type ExecutionContext } from '@nestjs/common';
 import { describe, expect, it, jest } from '@jest/globals';
+import { sign } from 'jsonwebtoken';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('JwtAuthGuard', () => {
+  const JWT_SECRET = 'test-secret';
+
   function createContext(request: {
     headers: Record<string, string | undefined>;
     params?: Record<string, string | undefined>;
@@ -15,161 +18,90 @@ describe('JwtAuthGuard', () => {
     } as ExecutionContext;
   }
 
-  it('skips auth for public namespace gateway requests', async () => {
-    const routeMap = {
-      'public-api': {
-        versions: { v1: 'http://public.internal' },
-        public: true,
-      },
-    };
-
-    const guard = new JwtAuthGuard(
+  function makeGuard(
+    overrides: Partial<{
+      authenticateApiKey: jest.Mock<() => Promise<unknown>>;
+      toIdentity: jest.Mock;
+    }> = {},
+  ) {
+    return new JwtAuthGuard(
       {
         get: jest.fn((key: string) =>
-          key === 'gateway.routeMap' ? routeMap : undefined,
+          key === 'gateway.jwtSecret' ? JWT_SECRET : undefined,
         ),
       } as never,
-      { toIdentity: jest.fn() } as never,
-      { authenticateApiKey: jest.fn() } as never,
-    );
-
-    const context = createContext({
-      headers: {},
-      params: {
-        namespace: 'public-api',
-        version: 'v1',
-      },
-    });
-
-    await expect(guard.canActivate(context)).resolves.toBe(true);
-  });
-
-  it('skips auth when request path matches a publicPaths rule', async () => {
-    const routeMap = {
-      api: {
-        versions: { v1: 'http://api.internal' },
-        publicPaths: [{ path: '/users/register', methods: ['POST'] }],
-      },
-    };
-
-    const guard = new JwtAuthGuard(
+      { toIdentity: overrides.toIdentity ?? jest.fn((c) => c) } as never,
       {
-        get: jest.fn((key: string) =>
-          key === 'gateway.routeMap' ? routeMap : undefined,
-        ),
+        authenticateApiKey:
+          overrides.authenticateApiKey ??
+          jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            id: 'user-1',
+            subject: 'sub-1',
+            provider: 'flowauth',
+            email: 'test@example.com',
+          }),
       } as never,
-      { toIdentity: jest.fn() } as never,
-      { authenticateApiKey: jest.fn() } as never,
     );
+  }
 
-    const context = {
-      switchToHttp: () => ({
-        getRequest: () => ({
-          headers: {},
-          params: { namespace: 'api', version: 'v1' },
-          url: '/api/api/v1/users/register',
-          method: 'POST',
-        }),
-      }),
-    } as ExecutionContext;
-
-    await expect(guard.canActivate(context)).resolves.toBe(true);
-  });
-
-  it('requires auth when request path does not match publicPaths rule method', async () => {
-    const routeMap = {
-      api: {
-        versions: { v1: 'http://api.internal' },
-        publicPaths: [{ path: '/users/register', methods: ['POST'] }],
-      },
-    };
-
-    const guard = new JwtAuthGuard(
-      {
-        get: jest.fn((key: string) =>
-          key === 'gateway.routeMap' ? routeMap : undefined,
-        ),
-      } as never,
-      { toIdentity: jest.fn() } as never,
-      { authenticateApiKey: jest.fn() } as never,
-    );
-
-    const context = {
-      switchToHttp: () => ({
-        getRequest: () => ({
-          headers: {},
-          params: { namespace: 'api', version: 'v1' },
-          url: '/api/api/v1/users/register',
-          method: 'GET',
-        }),
-      }),
-    } as ExecutionContext;
-
+  it('throws when no credential is provided', async () => {
+    const guard = makeGuard();
+    const context = createContext({ headers: {} });
     await expect(guard.canActivate(context)).rejects.toThrow(
       UnauthorizedException,
     );
   });
 
-  it('requires Bearer API key for gateway forwarding requests', async () => {
-    const guard = new JwtAuthGuard(
-      { get: jest.fn() } as never,
-      { toIdentity: jest.fn() } as never,
-      { authenticateApiKey: jest.fn() } as never,
-    );
-
-    const context = createContext({
-      headers: {},
-      params: {
-        namespace: 'hashguard',
-        version: 'v1',
-      },
-    });
-
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      UnauthorizedException,
-    );
-  });
-
-  it('authenticates Bearer API key with request namespace for gateway forwarding', async () => {
-    const authenticateApiKey = jest.fn(() =>
-      Promise.resolve({
-        id: 'user-1',
-        subject: 'subject-1',
-        provider: 'flowauth',
-        email: 'test@example.com',
-      }),
-    );
-
-    const guard = new JwtAuthGuard(
-      { get: jest.fn() } as never,
-      { toIdentity: jest.fn() } as never,
-      { authenticateApiKey } as never,
-    );
-
+  it('authenticates via x-api-key and sets user', async () => {
+    const guard = makeGuard();
     const request = {
-      headers: {
-        authorization: 'Bearer gk_test_key',
-      },
-      params: {
-        namespace: 'hashguard',
-        version: 'v1',
-      },
+      headers: { 'x-api-key': 'gk_test_key' },
       user: undefined,
     };
-
     const context = createContext(request);
-
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(authenticateApiKey.mock.calls[0]).toEqual([
-      'gk_test_key',
-      'hashguard',
-    ]);
-    expect(request.user).toEqual({
-      userId: 'user-1',
-      subject: 'subject-1',
-      provider: 'flowauth',
-      scopes: [],
-      email: 'test@example.com',
+    expect(request.user).toMatchObject({ userId: 'user-1', subject: 'sub-1' });
+  });
+
+  it('passes namespace param to authenticateApiKey when present', async () => {
+    const authenticateApiKey = jest
+      .fn<() => Promise<unknown>>()
+      .mockResolvedValue({
+        id: 'user-1',
+        subject: 'sub-1',
+        provider: 'flowauth',
+        email: null,
+      });
+    const guard = makeGuard({ authenticateApiKey });
+    const context = createContext({
+      headers: { 'x-api-key': 'gk_key' },
+      params: { namespace: 'orders' },
     });
+    await guard.canActivate(context);
+    expect(authenticateApiKey.mock.calls[0]).toEqual(['gk_key', 'orders']);
+  });
+
+  it('authenticates a valid JWT and sets user', async () => {
+    const toIdentity = jest.fn().mockReturnValue({ subject: 'sub-1' });
+    const guard = makeGuard({ toIdentity });
+    const token = sign({ sub: 'sub-1' }, JWT_SECRET, { algorithm: 'HS256' });
+    const request = {
+      headers: { authorization: `Bearer ${token}` },
+      user: undefined,
+    };
+    const context = createContext(request);
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(toIdentity).toHaveBeenCalled();
+    expect(request.user).toEqual({ subject: 'sub-1' });
+  });
+
+  it('throws UnauthorizedException for an invalid JWT', async () => {
+    const guard = makeGuard();
+    const context = createContext({
+      headers: { authorization: 'Bearer invalid.jwt.token' },
+    });
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 });

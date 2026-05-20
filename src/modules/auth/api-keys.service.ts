@@ -1,12 +1,15 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'node:crypto';
 import { IsNull, Repository } from 'typeorm';
+import type { Cache } from 'cache-manager';
 import { ApiKeyEntity } from './entities/api-key.entity';
 import { UserEntity } from './entities/user.entity';
 import type { RouteMap } from '../../common/types/gateway.types';
@@ -39,13 +42,11 @@ export interface PaginatedUserApiKeys {
 interface CachedAuthenticatedApiKey {
   user: UserEntity;
   apiKeyId: string;
-  expiresAt: number;
 }
 
 @Injectable()
 export class ApiKeysService {
-  private readonly authCache = new Map<string, CachedAuthenticatedApiKey>();
-  private readonly authCacheTtlMs = 30_000;
+  private static readonly AUTH_CACHE_TTL_MS = 30_000;
   private readonly lastUsedAtThrottle = new Map<string, number>();
   private readonly lastUsedAtUpdateIntervalMs = 60_000;
 
@@ -53,6 +54,7 @@ export class ApiKeysService {
     private readonly configService: ConfigService,
     @InjectRepository(ApiKeyEntity)
     private readonly apiKeysRepository: Repository<ApiKeyEntity>,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
   async listApiKeys(
@@ -154,7 +156,7 @@ export class ApiKeysService {
 
     target.revokedAt = new Date();
     await this.apiKeysRepository.save(target);
-    this.invalidateAuthCacheByHash(target.keyHash);
+    await this.invalidateAuthCacheByHash(target.keyHash, target.namespace);
     this.lastUsedAtThrottle.delete(target.id);
     return true;
   }
@@ -170,15 +172,12 @@ export class ApiKeysService {
     const keyHash = this.hashApiKey(rawKey);
     const now = Date.now();
     const cacheKey = this.createAuthCacheKey(keyHash, namespace);
-    const cached = this.authCache.get(cacheKey);
-
-    if (cached && cached.expiresAt > now) {
-      this.touchLastUsedAtThrottled(cached.apiKeyId, now);
-      return cached.user;
-    }
+    const cached =
+      await this.cacheManager.get<CachedAuthenticatedApiKey>(cacheKey);
 
     if (cached) {
-      this.authCache.delete(cacheKey);
+      this.touchLastUsedAtThrottled(cached.apiKeyId, now);
+      return cached.user;
     }
 
     const apiKey = await this.apiKeysRepository.findOne({
@@ -196,11 +195,11 @@ export class ApiKeysService {
       throw new UnauthorizedException('Invalid API key');
     }
 
-    this.authCache.set(cacheKey, {
-      user: apiKey.user,
-      apiKeyId: apiKey.id,
-      expiresAt: now + this.authCacheTtlMs,
-    });
+    await this.cacheManager.set(
+      cacheKey,
+      { user: apiKey.user, apiKeyId: apiKey.id },
+      ApiKeysService.AUTH_CACHE_TTL_MS,
+    );
 
     this.touchLastUsedAtThrottled(apiKey.id, now);
 
@@ -208,15 +207,18 @@ export class ApiKeysService {
   }
 
   private createAuthCacheKey(keyHash: string, namespace?: string): string {
-    return `${namespace || '*'}:${keyHash}`;
+    return `authCache:${namespace ?? '*'}:${keyHash}`;
   }
 
-  private invalidateAuthCacheByHash(keyHash: string): void {
-    for (const key of this.authCache.keys()) {
-      if (key.endsWith(`:${keyHash}`)) {
-        this.authCache.delete(key);
-      }
-    }
+  private async invalidateAuthCacheByHash(
+    keyHash: string,
+    namespace: string,
+  ): Promise<void> {
+    // Delete both the namespace-scoped and wildcard-scoped cache entries.
+    await Promise.all([
+      this.cacheManager.del(this.createAuthCacheKey(keyHash, namespace)),
+      this.cacheManager.del(this.createAuthCacheKey(keyHash, undefined)),
+    ]);
   }
 
   private touchLastUsedAtThrottled(apiKeyId: string, now: number): void {

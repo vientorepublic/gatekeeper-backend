@@ -16,9 +16,11 @@ import type { Request } from 'express';
 import { ApiKeysService } from './api-keys.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Oauth2Service } from './oauth2.service';
+import { UserEntity } from './entities/user.entity';
 import type { GatewayUserIdentity } from '../../common/types/gateway.types';
 import { ConfigService } from '@nestjs/config';
 import type { RouteMap } from '../../common/types/gateway.types';
+import { isVersionedNamespaceRoute } from '../../common/utils/gateway-route.utils';
 import {
   ApiKeyListQueryDto,
   ApiKeyRequestBodyDto,
@@ -36,42 +38,8 @@ import type {
   OAuth2AuthorizeResponseDto,
   OAuth2RefreshResponseDto,
   OAuth2SessionResponseDto,
+  OAuth2UserDto,
 } from './dto/auth.dto';
-
-interface OAuth2GatewaySessionResult {
-  accessToken: string;
-  user: {
-    id: string;
-    provider: string;
-    subject: string;
-    email: string | null;
-    name: string | null;
-    avatarUrl: string | null;
-  };
-}
-
-interface OAuth2GatewayRefreshResult extends OAuth2GatewaySessionResult {
-  refreshToken: string | null;
-  oauthAccessTokenExpiresIn: number | null;
-}
-
-type Oauth2ServiceContract = {
-  createAuthorizationRequest: () => Promise<{
-    authUrl: string;
-    state: string;
-  }>;
-  completeAuthorizationCodeGrant: (
-    code: string,
-    state: string,
-  ) => Promise<OAuth2GatewayRefreshResult>;
-  createSessionFromAccessToken: (
-    accessToken: string,
-    scope?: string,
-  ) => Promise<OAuth2GatewaySessionResult>;
-  refreshSessionFromRefreshToken: (
-    refreshToken: string,
-  ) => Promise<OAuth2GatewayRefreshResult>;
-};
 
 @Controller('auth')
 export class AuthController {
@@ -80,10 +48,6 @@ export class AuthController {
     private readonly apiKeysService: ApiKeysService,
     private readonly configService: ConfigService,
   ) {}
-
-  private get oauth2(): Oauth2ServiceContract {
-    return this.oauth2Service as unknown as Oauth2ServiceContract;
-  }
 
   @Get('namespaces')
   getNamespaces(): NamespacesResponseDto {
@@ -123,9 +87,11 @@ export class AuthController {
             : {
                 namespace,
                 supportsAnyVersion: false,
-                versions: Object.keys(entry as Record<string, unknown>).sort(
-                  (left, right) => left.localeCompare(right),
-                ),
+                versions: Object.keys(
+                  isVersionedNamespaceRoute(entry)
+                    ? entry.versions
+                    : (entry as Record<string, unknown>),
+                ).sort((left, right) => left.localeCompare(right)),
               };
 
         return routeGuide;
@@ -137,7 +103,7 @@ export class AuthController {
 
   @Get('oauth2/authorize')
   async getAuthorizeUrl(): Promise<OAuth2AuthorizeResponseDto> {
-    const payload = await this.oauth2.createAuthorizationRequest();
+    const payload = await this.oauth2Service.createAuthorizationRequest();
 
     return {
       authorizeUrl: payload.authUrl,
@@ -149,7 +115,7 @@ export class AuthController {
   async handleOAuth2Callback(
     @Query() query: OAuth2CallbackQueryDto,
   ): Promise<OAuth2RefreshResponseDto> {
-    const result = await this.oauth2.completeAuthorizationCodeGrant(
+    const result = await this.oauth2Service.completeAuthorizationCodeGrant(
       query.code,
       query.state,
     );
@@ -159,14 +125,7 @@ export class AuthController {
       refreshToken: result.refreshToken,
       oauthAccessTokenExpiresIn: result.oauthAccessTokenExpiresIn,
       tokenType: 'Bearer',
-      user: {
-        id: result.user.id,
-        provider: result.user.provider,
-        subject: result.user.subject,
-        email: result.user.email,
-        name: result.user.name,
-        avatarUrl: result.user.avatarUrl,
-      },
+      user: this.toUserDto(result.user),
     };
   }
 
@@ -174,7 +133,7 @@ export class AuthController {
   async createOAuth2Session(
     @Body() body: OAuth2SessionRequestBodyDto,
   ): Promise<OAuth2SessionResponseDto> {
-    const result = await this.oauth2.createSessionFromAccessToken(
+    const result = await this.oauth2Service.createSessionFromAccessToken(
       body.accessToken,
       body.scope,
     );
@@ -182,14 +141,7 @@ export class AuthController {
     return {
       accessToken: result.accessToken,
       tokenType: 'Bearer',
-      user: {
-        id: result.user.id,
-        provider: result.user.provider,
-        subject: result.user.subject,
-        email: result.user.email,
-        name: result.user.name,
-        avatarUrl: result.user.avatarUrl,
-      },
+      user: this.toUserDto(result.user),
     };
   }
 
@@ -197,7 +149,7 @@ export class AuthController {
   async refreshOAuth2Session(
     @Body() body: OAuth2RefreshRequestBodyDto,
   ): Promise<OAuth2RefreshResponseDto> {
-    const result = await this.oauth2.refreshSessionFromRefreshToken(
+    const result = await this.oauth2Service.refreshSessionFromRefreshToken(
       body.refreshToken,
     );
 
@@ -206,14 +158,7 @@ export class AuthController {
       refreshToken: result.refreshToken,
       oauthAccessTokenExpiresIn: result.oauthAccessTokenExpiresIn,
       tokenType: 'Bearer',
-      user: {
-        id: result.user.id,
-        provider: result.user.provider,
-        subject: result.user.subject,
-        email: result.user.email,
-        name: result.user.name,
-        avatarUrl: result.user.avatarUrl,
-      },
+      user: this.toUserDto(result.user),
     };
   }
 
@@ -224,10 +169,7 @@ export class AuthController {
     @Param('namespace') namespace: string,
     @Query() query: ApiKeyListQueryDto,
   ): Promise<ApiKeyListResponseDto> {
-    const user = req.user;
-    if (!user?.userId) {
-      throw new UnauthorizedException('Authenticated user is required');
-    }
+    const user = this.requireUser(req);
 
     return this.apiKeysService.listApiKeys(
       user.userId,
@@ -244,10 +186,7 @@ export class AuthController {
     @Param('namespace') namespace: string,
     @Body() body: ApiKeyRequestBodyDto,
   ): Promise<ApiKeyIssueResponseDto> {
-    const user = req.user;
-    if (!user?.userId) {
-      throw new UnauthorizedException('Authenticated user is required');
-    }
+    const user = this.requireUser(req);
 
     const issued = await this.apiKeysService.issueApiKey(
       user.userId,
@@ -272,10 +211,7 @@ export class AuthController {
     @Param('namespace') namespace: string,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ): Promise<ApiKeyRevokeResponseDto> {
-    const user = req.user;
-    if (!user?.userId) {
-      throw new UnauthorizedException('Authenticated user is required');
-    }
+    const user = this.requireUser(req);
 
     const revoked = await this.apiKeysService.revokeApiKey(
       user.userId,
@@ -283,5 +219,25 @@ export class AuthController {
       id,
     );
     return { revoked };
+  }
+
+  private requireUser(
+    req: Request & { user?: GatewayUserIdentity },
+  ): GatewayUserIdentity & { userId: string } {
+    if (!req.user?.userId) {
+      throw new UnauthorizedException('Authenticated user is required');
+    }
+    return req.user as GatewayUserIdentity & { userId: string };
+  }
+
+  private toUserDto(user: UserEntity): OAuth2UserDto {
+    return {
+      id: user.id,
+      provider: user.provider,
+      subject: user.subject,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+    };
   }
 }
