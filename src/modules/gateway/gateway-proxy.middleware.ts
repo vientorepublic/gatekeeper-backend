@@ -13,6 +13,7 @@ import { Transform, Writable } from 'node:stream';
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { ApiKeysService } from '../auth/api-keys.service';
+import { ProxyStateService } from './proxy-state.service';
 import { RouteRegistryService } from './route-registry.service';
 import { GatewayMetricsService } from '../health/gateway-metrics.service';
 import {
@@ -66,20 +67,12 @@ export class GatewayProxyMiddleware implements NestMiddleware {
   private readonly circuitBreakerCooldownMs: number;
   private readonly rateLimitWindowMs: number;
   private readonly rateLimitMaxRequests: number;
-  private readonly rateLimitState = new Map<
-    string,
-    { count: number; windowStart: number }
-  >();
-  private readonly circuitState = new Map<
-    string,
-    { consecutiveFailures: number; openUntil: number }
-  >();
-
   constructor(
     private readonly routeRegistry: RouteRegistryService,
     private readonly configService: ConfigService,
     private readonly apiKeysService: ApiKeysService,
     private readonly gatewayMetricsService: GatewayMetricsService,
+    private readonly proxyStateService: ProxyStateService,
   ) {
     this.maxRequestBodyBytes = this.getPositiveNumberConfig(
       'gateway.maxProxyRequestBodyBytes',
@@ -117,7 +110,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
 
     try {
       const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
-      this.assertRateLimit(clientIp);
+      await this.assertRateLimit(clientIp);
 
       const proxyPath = this.parseProxyPath(req);
       if (!proxyPath) {
@@ -243,8 +236,8 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     });
   }
 
-  private assertCircuitClosed(target: string): void {
-    const state = this.circuitState.get(target);
+  private async assertCircuitClosed(target: string): Promise<void> {
+    const state = await this.proxyStateService.getCircuitState(target);
     if (!state) {
       return;
     }
@@ -258,31 +251,32 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     }
 
     if (state.openUntil > 0) {
-      this.circuitState.delete(target);
+      await this.proxyStateService.deleteCircuitState(target);
     }
   }
 
-  private markUpstreamFailure(target: string): void {
+  private async markUpstreamFailure(target: string): Promise<void> {
     const now = Date.now();
-    const previous = this.circuitState.get(target);
+    const previous = await this.proxyStateService.getCircuitState(target);
     const consecutiveFailures = (previous?.consecutiveFailures ?? 0) + 1;
 
-    if (consecutiveFailures >= this.circuitBreakerFailureThreshold) {
-      this.circuitState.set(target, {
-        consecutiveFailures,
-        openUntil: now + this.circuitBreakerCooldownMs,
-      });
-      return;
-    }
+    const newState =
+      consecutiveFailures >= this.circuitBreakerFailureThreshold
+        ? {
+            consecutiveFailures,
+            openUntil: now + this.circuitBreakerCooldownMs,
+          }
+        : { consecutiveFailures, openUntil: 0 };
 
-    this.circuitState.set(target, {
-      consecutiveFailures,
-      openUntil: 0,
-    });
+    await this.proxyStateService.setCircuitState(
+      target,
+      newState,
+      this.circuitBreakerCooldownMs,
+    );
   }
 
-  private markUpstreamSuccess(target: string): void {
-    this.circuitState.delete(target);
+  private async markUpstreamSuccess(target: string): Promise<void> {
+    await this.proxyStateService.deleteCircuitState(target);
   }
 
   private async forwardToUpstream(
@@ -293,7 +287,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     tailPath: string,
     keepVersionPrefix: boolean,
   ): Promise<void> {
-    this.assertCircuitClosed(target);
+    await this.assertCircuitClosed(target);
 
     const rewrittenPath = this.buildUpstreamPath(
       req,
@@ -359,14 +353,14 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       });
 
       if (!upstreamResponse.body) {
-        this.markUpstreamSuccess(target);
+        await this.markUpstreamSuccess(target);
         res.end();
         return;
       }
 
       await upstreamResponse.body.pipeTo(Writable.toWeb(res));
 
-      this.markUpstreamSuccess(target);
+      await this.markUpstreamSuccess(target);
     } catch (error) {
       if (error instanceof PayloadTooLargeException) {
         this.gatewayMetricsService.recordPayloadTooLarge();
@@ -382,7 +376,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       }
 
       if (!(error instanceof HttpException)) {
-        this.markUpstreamFailure(target);
+        await this.markUpstreamFailure(target);
       }
 
       throw error;
@@ -424,25 +418,12 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     response.end(body);
   }
 
-  private assertRateLimit(clientIp: string): void {
-    const now = Date.now();
-    const state = this.rateLimitState.get(clientIp);
-
-    if (!state || now - state.windowStart >= this.rateLimitWindowMs) {
-      // Purge expired entries to prevent unbounded memory growth under high IP cardinality
-      if (this.rateLimitState.size > 10_000) {
-        for (const [key, entry] of this.rateLimitState) {
-          if (now - entry.windowStart >= this.rateLimitWindowMs) {
-            this.rateLimitState.delete(key);
-          }
-        }
-      }
-      this.rateLimitState.set(clientIp, { count: 1, windowStart: now });
-      return;
-    }
-
-    state.count += 1;
-    if (state.count > this.rateLimitMaxRequests) {
+  private async assertRateLimit(clientIp: string): Promise<void> {
+    const count = await this.proxyStateService.incrementRateLimit(
+      clientIp,
+      this.rateLimitWindowMs,
+    );
+    if (count > this.rateLimitMaxRequests) {
       this.gatewayMetricsService.recordGatewayHttpStatus(
         HttpStatus.TOO_MANY_REQUESTS,
       );

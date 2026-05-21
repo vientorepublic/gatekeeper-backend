@@ -31,6 +31,7 @@ import { IdentityService } from '../src/modules/auth/identity.service';
 import { JwtAuthGuard } from '../src/modules/auth/jwt-auth.guard';
 import { Oauth2Service } from '../src/modules/auth/oauth2.service';
 import { GatewayProxyMiddleware } from '../src/modules/gateway/gateway-proxy.middleware';
+import { ProxyStateService } from '../src/modules/gateway/proxy-state.service';
 import { RouteRegistryService } from '../src/modules/gateway/route-registry.service';
 import { HealthController } from '../src/modules/health/health.controller';
 import { GatewayMetricsService } from '../src/modules/health/gateway-metrics.service';
@@ -178,6 +179,7 @@ class TestGatewayController {
     GatewayProxyMiddleware,
     RouteRegistryService,
     GatewayMetricsService,
+    ProxyStateService,
     {
       provide: ConfigService,
       useValue: configServiceMock,
@@ -1060,6 +1062,7 @@ class RateLimitTestGatewayController {
     GatewayProxyMiddleware,
     RouteRegistryService,
     GatewayMetricsService,
+    ProxyStateService,
     { provide: ConfigService, useValue: rateLimitConfigServiceMock },
     { provide: CACHE_MANAGER, useValue: cacheManagerMock },
     { provide: ApiKeysService, useValue: rateLimitApiKeysServiceMock },

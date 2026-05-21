@@ -11,6 +11,7 @@ import gatewayConfig from './config/gateway.config';
 import type { DatabaseConfig } from './config/gateway.config';
 import { GatewayController } from './modules/gateway/gateway.controller';
 import { GatewayProxyMiddleware } from './modules/gateway/gateway-proxy.middleware';
+import { ProxyStateService } from './modules/gateway/proxy-state.service';
 import { HealthController } from './modules/health/health.controller';
 import { UserEntity } from './modules/auth/entities/user.entity';
 import { ApiKeyEntity } from './modules/auth/entities/api-key.entity';
@@ -100,6 +101,7 @@ import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-ini
     },
     RouteRegistryService,
     GracefulShutdownService,
+    ProxyStateService,
     GatewayProxyMiddleware,
   ],
 })
