@@ -46,6 +46,20 @@ function normalizePublicPath(
   );
 }
 
+function validateTargetUrl(target: string, context: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    throw new Error(`Invalid URL for "${context}": "${target}"`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(
+      `Target URL for "${context}" must use http or https protocol, got "${parsed.protocol}"`,
+    );
+  }
+}
+
 function normalizeRouteMap(value: unknown): RouteMap {
   if (!isRecord(value)) {
     throw new Error('ROUTE_MAP must be a JSON object');
@@ -55,6 +69,7 @@ function normalizeRouteMap(value: unknown): RouteMap {
 
   for (const [namespace, routeValue] of Object.entries(value)) {
     if (typeof routeValue === 'string') {
+      validateTargetUrl(routeValue, namespace);
       normalized[namespace] = routeValue;
       continue;
     }
@@ -73,6 +88,7 @@ function normalizeRouteMap(value: unknown): RouteMap {
             `ROUTE_MAP target for "${namespace}.${version}" must be a string URL`,
           );
         }
+        validateTargetUrl(target, `${namespace}.${version}`);
         versionMap[version] = target;
       }
       const rawPublicPaths = routeValue['publicPaths'];
@@ -98,6 +114,7 @@ function normalizeRouteMap(value: unknown): RouteMap {
         );
       }
 
+      validateTargetUrl(target, `${namespace}.${version}`);
       versionMap[version] = target;
     }
 
@@ -184,6 +201,8 @@ export default registerAs('gateway', () => ({
     process.env.PROXY_CIRCUIT_BREAKER_COOLDOWN_MS,
     10_000,
   ),
+  rateLimitWindowMs: parseNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
+  rateLimitMaxRequests: parseNumber(process.env.RATE_LIMIT_MAX_REQUESTS, 100),
   routeMap: parseRouteMap(process.env.ROUTE_MAP),
   redisUrl: process.env.REDIS_URL,
   oauth2Issuer: process.env.OAUTH2_ISSUER ?? '',

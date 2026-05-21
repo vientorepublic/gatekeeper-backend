@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -27,6 +28,8 @@ interface TokenPayload {
 
 @Injectable()
 export class Oauth2Service {
+  private readonly logger = new Logger(Oauth2Service.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
@@ -104,15 +107,13 @@ export class Oauth2Service {
 
   async createSessionFromAccessToken(
     accessToken: string,
-    scope?: string,
   ): Promise<{ accessToken: string; user: UserEntity }> {
     const client = this.createClient();
     const profile = await this.fetchProfile(client, {
       access_token: accessToken,
-      scope,
     });
     const user = await this.usersService.upsertOAuth2User('flowauth', profile);
-    const jwt = this.issueGatewayToken(user, scope);
+    const jwt = this.issueGatewayToken(user);
 
     return {
       accessToken: jwt,
@@ -166,10 +167,11 @@ export class Oauth2Service {
         unknown
       >;
     } catch (error) {
-      const reason = this.getErrorMessage(error);
-      throw new BadGatewayException(
-        `OAuth2 userinfo request failed: ${reason}`,
+      this.logger.error(
+        'OAuth2 userinfo request failed',
+        error instanceof Error ? error.message : String(error),
       );
+      throw new BadGatewayException('OAuth2 userinfo request failed');
     }
 
     const subject = this.extractString(userInfo, ['sub', 'id', 'user_id']);
@@ -206,8 +208,11 @@ export class Oauth2Service {
     try {
       return (await client.exchangeCode(code, codeVerifier)) as TokenPayload;
     } catch (error) {
-      const reason = this.getErrorMessage(error);
-      throw new BadGatewayException(`OAuth2 token exchange failed: ${reason}`);
+      this.logger.error(
+        'OAuth2 token exchange failed',
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new BadGatewayException('OAuth2 token exchange failed');
     }
   }
 
@@ -218,8 +223,11 @@ export class Oauth2Service {
     try {
       return (await client.refreshToken(refreshToken)) as TokenPayload;
     } catch (error) {
-      const reason = this.getErrorMessage(error);
-      throw new BadGatewayException(`OAuth2 token refresh failed: ${reason}`);
+      this.logger.error(
+        'OAuth2 token refresh failed',
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new BadGatewayException('OAuth2 token refresh failed');
     }
   }
 
@@ -250,6 +258,7 @@ export class Oauth2Service {
         uid: user.id,
         provider: user.provider,
         scope,
+        aud: 'gatekeeper',
       },
       jwtSecret,
       {

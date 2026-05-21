@@ -1,6 +1,8 @@
 import { CacheModule } from '@nestjs/cache-manager';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import Keyv from 'keyv';
 import KeyvRedis from '@keyv/redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -25,6 +27,10 @@ import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-ini
       isGlobal: true,
       load: [gatewayConfig],
     }),
+    // 30 requests per minute per IP across all auth/health routes.
+    // GatewayController routes are excluded via @SkipThrottle() because
+    // the proxy middleware applies its own per-IP rate limiting.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 30 }]),
     ScheduleModule.forRoot(),
     HealthMetricsModule,
     CronJobsModule,
@@ -88,6 +94,10 @@ import { InitialAuthSchema20260409000000 } from './migrations/20260409000000-ini
   ],
   controllers: [HealthController, GatewayController],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     RouteRegistryService,
     GracefulShutdownService,
     GatewayProxyMiddleware,

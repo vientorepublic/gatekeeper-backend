@@ -62,7 +62,11 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     }
 
     const title = STATUS_CODES[status] ?? 'Error';
-    const instance = request.originalUrl || request.url || '/';
+    // Strip query string to avoid leaking sensitive parameters (e.g. OAuth2 codes)
+    const rawInstance = request.originalUrl || request.url || '/';
+    const instance = rawInstance.includes('?')
+      ? rawInstance.slice(0, rawInstance.indexOf('?'))
+      : rawInstance;
 
     const problem: ProblemDetails = {
       title,

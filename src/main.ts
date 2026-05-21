@@ -20,6 +20,12 @@ async function bootstrap() {
 
   const jwtSecret = configService.get<string>('gateway.jwtSecret');
   if (jwtSecret === 'change-me-in-production') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'JWT_HMAC_SECRET must be changed from the default value in production. ' +
+          'Set JWT_HMAC_SECRET to a cryptographically random secret of at least 32 bytes.',
+      );
+    }
     logger.warn(
       'JWT_HMAC_SECRET is set to the default insecure value. ' +
         'Set JWT_HMAC_SECRET to a strong random secret before deploying to production.',

@@ -13,6 +13,7 @@ import {
   All,
   Controller,
   Module,
+  UnauthorizedException,
   ValidationPipe,
   type INestApplication,
   type MiddlewareConsumer,
@@ -20,6 +21,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { sign } from 'jsonwebtoken';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { ProblemDetailsFilter } from '../src/common/filters/problem-details.filter';
 import { ApiKeysService } from '../src/modules/auth/api-keys.service';
@@ -312,7 +315,10 @@ describe('Gateway proxy e2e', () => {
       imports: [GatewayTestModule],
     }).compile();
 
-    app = moduleRef.createNestApplication();
+    app = moduleRef.createNestApplication<NestExpressApplication>();
+    // Mirror main.ts: suppress the X-Powered-By: Express header so the test
+    // can assert that the gateway never leaks technology fingerprints to clients.
+    (app as NestExpressApplication).disable('x-powered-by');
     await app.init();
   });
 
@@ -484,6 +490,80 @@ describe('Gateway proxy e2e', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('strips leading slashes in tail path to prevent SSRF via protocol-relative URL', async () => {
+    // Before the fix: tailPath "//evil.com" → new URL("//evil.com", base) hijacks the host.
+    // After the fix:  normalizedTail = tailPath.replace(/^\/+/, '') → "evil.com"
+    //                 upstreamUrl = new URL("/v1/evil.com", "http://billing.internal")
+    //                            = "http://billing.internal/v1/evil.com" ✓
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/api/billing/v1///evil.com/steal')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(200);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const calledUrl = fetchSpy.mock.calls[0]?.[0] as string;
+    expect(calledUrl).toBe('http://billing.internal/v1/evil.com/steal');
+    expect(calledUrl).not.toMatch(/^https?:\/\/evil\.com/);
+  });
+
+  it('strips blocked upstream response headers before forwarding to client', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    fetchSpy.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            // blocked headers that must be removed
+            'set-cookie': 'session=supersecret; Path=/',
+            server: 'nginx/1.21.0',
+            'x-powered-by': 'Express',
+            'access-control-allow-origin': 'https://attacker.example',
+            'access-control-allow-credentials': 'true',
+            // safe header that must be forwarded
+            'x-request-id': 'trace-abc-123',
+          },
+        }),
+      ),
+    );
+
+    const res = await request(server)
+      .get('/api/hashguard/v1/data')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(200);
+
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(res.headers['server']).toBeUndefined();
+    expect(res.headers['x-powered-by']).toBeUndefined();
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    // safe header must pass through
+    expect(res.headers['x-request-id']).toBe('trace-abc-123');
+  });
+
+  it('omits query string from error instance field to prevent token leakage', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    fetchSpy.mockRejectedValueOnce(new Error('upstream down'));
+
+    const res = await request(server)
+      .get(
+        '/api/hashguard/v1/oauth/callback?code=auth-code-secret&state=state-xyz',
+      )
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(500);
+
+    const body = res.body as Record<string, unknown>;
+    expect(typeof body.instance).toBe('string');
+    const instance = body.instance as string;
+    expect(instance).toBe('/api/hashguard/v1/oauth/callback');
+    expect(instance).not.toContain('?');
+    expect(instance).not.toContain('code');
+    expect(instance).not.toContain('auth-code-secret');
+  });
+
   it('exposes runtime proxy metrics at health metrics endpoint', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
@@ -497,6 +577,124 @@ describe('Gateway proxy e2e', () => {
     }
 
     expect(responseBody.proxy.total).toBeGreaterThanOrEqual(1);
+  });
+
+  // --- Body size boundary ---
+
+  it('returns 200 when POST body is exactly at the configured byte limit', async () => {
+    // maxProxyRequestBodyBytes = 8; the guard is strict (>), so exactly 8 bytes is allowed.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/api/hashguard/v1/echo')
+      .set('authorization', 'Bearer gk_test_key')
+      .set('content-type', 'text/plain')
+      .send('12345678') // 8 bytes — at the limit, not over
+      .expect(200);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 413 when POST body is one byte over the configured byte limit', async () => {
+    // 9 > 8 → PayloadTooLargeException is thrown before the upstream fetch is attempted.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/api/hashguard/v1/echo')
+      .set('authorization', 'Bearer gk_test_key')
+      .set('content-type', 'text/plain')
+      .send('123456789') // 9 bytes — one over the limit
+      .expect(413);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // --- Route resolution boundary ---
+
+  it('returns 404 when the namespace does not exist in the route map', async () => {
+    // Tests a completely unknown namespace (vs. a known namespace with unknown version).
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/api/completely-unknown-namespace/v1/health')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(404);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // --- Auth scheme boundary ---
+
+  it('returns 401 when authorization header uses a non-Bearer scheme', async () => {
+    // Basic auth credentials must not be accepted in place of a gateway API key.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/api/hashguard/v1/health')
+      .set('authorization', 'Basic dXNlcjpwYXNz')
+      .expect(401);
+
+    expect(apiKeysServiceMock.authenticateApiKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 when the API key service rejects the provided key', async () => {
+    // Simulates a revoked or otherwise invalid key being returned by the service layer.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    apiKeysServiceMock.authenticateApiKey.mockRejectedValueOnce(
+      new UnauthorizedException('Invalid or revoked API key'),
+    );
+
+    await request(server)
+      .get('/api/hashguard/v1/health')
+      .set('authorization', 'Bearer revoked_key')
+      .expect(401);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // --- Upstream response passthrough ---
+
+  it('forwards upstream 4xx status codes to the client unchanged', async () => {
+    // The gateway must not swallow upstream error responses.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    fetchSpy.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'not found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+    await request(server)
+      .get('/api/hashguard/v1/missing-resource')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(404);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards upstream 3xx redirect to the client without following it', async () => {
+    // redirect: 'manual' means the gateway returns the raw 3xx + Location header
+    // to the caller; the client is responsible for following the redirect.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    fetchSpy.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 301,
+          headers: { location: 'https://new.location.example/path' },
+        }),
+      ),
+    );
+
+    const res = await request(server)
+      .get('/api/hashguard/v1/old-path')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(301);
+
+    expect(res.headers.location).toBe('https://new.location.example/path');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -526,6 +724,7 @@ describe('Auth e2e validation', () => {
     oauth2ServiceMock.createSessionFromAccessToken.mockClear();
     oauth2ServiceMock.refreshSessionFromRefreshToken.mockClear();
     authApiKeysServiceMock.authenticateApiKey.mockClear();
+    authApiKeysServiceMock.listApiKeys.mockClear();
     authApiKeysServiceMock.issueApiKey.mockClear();
     authApiKeysServiceMock.revokeApiKey.mockClear();
   });
@@ -577,7 +776,7 @@ describe('Auth e2e validation', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('accepts oauth2 session body and forwards trimmed values', async () => {
+  it('accepts oauth2 session body and forwards only accessToken (scope ignored to prevent injection)', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
     await request(server)
@@ -588,10 +787,14 @@ describe('Auth e2e validation', () => {
       })
       .expect(201);
 
+    // scope must NOT be forwarded to the service — it is intentionally stripped
+    // to prevent caller-controlled scope injection into the issued gateway JWT.
     expect(oauth2ServiceMock.createSessionFromAccessToken).toHaveBeenCalledWith(
       'token-abc',
-      'openid profile',
     );
+    expect(
+      oauth2ServiceMock.createSessionFromAccessToken.mock.calls[0],
+    ).toHaveLength(1);
   });
 
   it('rejects api key issue when label exceeds max length', async () => {
@@ -616,5 +819,456 @@ describe('Auth e2e validation', () => {
       .expect('content-type', /application\/problem\+json/);
 
     expect(authApiKeysServiceMock.revokeApiKey).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 for GET /auth/namespaces when no credentials are provided', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server).get('/auth/namespaces').expect(401);
+  });
+
+  it('returns namespace list for GET /auth/namespaces with valid x-api-key', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const res = await request(server)
+      .get('/auth/namespaces')
+      .set('x-api-key', 'gk_test_key')
+      .expect(200);
+
+    const body = res.body as { namespaces?: unknown };
+    expect(Array.isArray(body.namespaces)).toBe(true);
+  });
+
+  // --- OAuth2 callback query boundary ---
+
+  it('rejects oauth2 callback when only code is provided without state', async () => {
+    // Symmetric case: the existing test covers only-state; this covers only-code.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/auth/oauth2/callback?code=authorization-code-value')
+      .expect(400)
+      .expect('content-type', /application\/problem\+json/);
+
+    expect(
+      oauth2ServiceMock.completeAuthorizationCodeGrant,
+    ).not.toHaveBeenCalled();
+  });
+
+  // --- API key label length boundary ---
+
+  it('accepts api key issue when label is at the max allowed length of 128 chars', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/auth/api-keys/hashguard')
+      .set('x-api-key', 'gk_test_key')
+      .send({ label: 'a'.repeat(128) }) // at the limit, not over
+      .expect(201);
+
+    expect(authApiKeysServiceMock.issueApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts api key issue when label is an empty string (treated as absent)', async () => {
+    // trimToUndefined converts '' → undefined; @IsOptional() accepts undefined.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/auth/api-keys/hashguard')
+      .set('x-api-key', 'gk_test_key')
+      .send({ label: '' })
+      .expect(201);
+
+    expect(authApiKeysServiceMock.issueApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  // --- OAuth2 session body boundary ---
+
+  it('rejects oauth2 session body when the accessToken field is entirely absent', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server).post('/auth/oauth2/session').send({}).expect(400);
+
+    expect(
+      oauth2ServiceMock.createSessionFromAccessToken,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('accepts oauth2 session body when accessToken is at the max allowed length of 8192 chars', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/auth/oauth2/session')
+      .send({ accessToken: 'a'.repeat(8192) })
+      .expect(201);
+
+    expect(
+      oauth2ServiceMock.createSessionFromAccessToken,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects oauth2 session body when accessToken exceeds the max allowed length of 8192 chars', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/auth/oauth2/session')
+      .send({ accessToken: 'a'.repeat(8193) })
+      .expect(400);
+
+    expect(
+      oauth2ServiceMock.createSessionFromAccessToken,
+    ).not.toHaveBeenCalled();
+  });
+
+  // --- API key list pagination boundary ---
+
+  it('rejects api key list when page query param is below the minimum value of 1', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/auth/api-keys/hashguard?page=0')
+      .set('x-api-key', 'gk_test_key')
+      .expect(400);
+
+    expect(authApiKeysServiceMock.listApiKeys).not.toHaveBeenCalled();
+  });
+
+  it('rejects api key list when pageSize query param exceeds the maximum value of 100', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/auth/api-keys/hashguard?pageSize=101')
+      .set('x-api-key', 'gk_test_key')
+      .expect(400);
+
+    expect(authApiKeysServiceMock.listApiKeys).not.toHaveBeenCalled();
+  });
+
+  it('accepts api key list when pageSize is exactly at the maximum allowed value of 100', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .get('/auth/api-keys/hashguard?pageSize=100')
+      .set('x-api-key', 'gk_test_key')
+      .expect(200);
+
+    expect(authApiKeysServiceMock.listApiKeys).toHaveBeenCalledTimes(1);
+  });
+
+  // --- OAuth2 refresh body boundary ---
+
+  it('rejects oauth2 refresh body when the refreshToken field is absent', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server).post('/auth/oauth2/refresh').send({}).expect(400);
+
+    expect(
+      oauth2ServiceMock.refreshSessionFromRefreshToken,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects oauth2 refresh body when refreshToken is blank whitespace', async () => {
+    // trimToString converts '   ' → ''; @IsNotEmpty() then fails.
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server)
+      .post('/auth/oauth2/refresh')
+      .send({ refreshToken: '   ' })
+      .expect(400);
+
+    expect(
+      oauth2ServiceMock.refreshSessionFromRefreshToken,
+    ).not.toHaveBeenCalled();
+  });
+
+  // --- Route map endpoint boundary ---
+
+  it('returns 401 for GET /auth/route-map when no credentials are provided', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    await request(server).get('/auth/route-map').expect(401);
+  });
+
+  it('returns route guide with namespace and version details for GET /auth/route-map', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const res = await request(server)
+      .get('/auth/route-map')
+      .set('x-api-key', 'gk_test_key')
+      .expect(200);
+
+    const body = res.body as {
+      namespaces?: Array<{
+        namespace: string;
+        supportsAnyVersion: boolean;
+        versions: string[];
+      }>;
+    };
+    expect(Array.isArray(body.namespaces)).toBe(true);
+    const hashguard = body.namespaces?.find(
+      (ns) => ns.namespace === 'hashguard',
+    );
+    expect(hashguard).toBeDefined();
+    expect(hashguard?.supportsAnyVersion).toBe(false);
+    expect(hashguard?.versions).toContain('v1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting security tests
+// A dedicated module is used so the middleware is constructed with a low
+// threshold (2 req / window) without affecting the main test module state.
+// ---------------------------------------------------------------------------
+
+const rateLimitConfigServiceMock = {
+  get: (key: string) => {
+    if (key === 'gateway.routeMap') {
+      return { hashguard: { v1: 'http://hashguard.internal' } };
+    }
+    if (key === 'gateway.oauth2Issuer') return '';
+    if (key === 'gateway.maxProxyRequestBodyBytes') return 1_048_576;
+    if (key === 'gateway.proxyTimeoutMs') return 5_000;
+    if (key === 'gateway.proxyCircuitBreakerFailureThreshold') return 10;
+    if (key === 'gateway.proxyCircuitBreakerCooldownMs') return 60_000;
+    // Low limits to make the test deterministic without sending 100 requests.
+    if (key === 'gateway.rateLimitWindowMs') return 60_000;
+    if (key === 'gateway.rateLimitMaxRequests') return 2;
+    return undefined;
+  },
+};
+
+const rateLimitApiKeysServiceMock = {
+  authenticateApiKey: jest.fn().mockResolvedValue({
+    id: 'user-1',
+    subject: 'subject-1',
+    provider: 'flowauth',
+    email: 'test@example.com',
+  }),
+};
+
+@Controller('api/:namespace/:version')
+class RateLimitTestGatewayController {
+  @All('*path')
+  passthrough(): void {
+    return;
+  }
+}
+
+@Module({
+  controllers: [RateLimitTestGatewayController],
+  providers: [
+    GatewayProxyMiddleware,
+    RouteRegistryService,
+    GatewayMetricsService,
+    { provide: ConfigService, useValue: rateLimitConfigServiceMock },
+    { provide: CACHE_MANAGER, useValue: cacheManagerMock },
+    { provide: ApiKeysService, useValue: rateLimitApiKeysServiceMock },
+  ],
+})
+class RateLimitTestModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer
+      .apply(GatewayProxyMiddleware)
+      .forRoutes(RateLimitTestGatewayController);
+  }
+}
+
+describe('Gateway proxy rate limiting', () => {
+  let app: INestApplication;
+  let fetchSpy: jest.SpiedFunction<typeof global.fetch>;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [RateLimitTestModule],
+    }).compile();
+
+    app = moduleRef.createNestApplication<NestExpressApplication>();
+    (app as NestExpressApplication).disable('x-powered-by');
+    await app.init();
+  });
+
+  beforeEach(() => {
+    cacheStore.clear();
+    rateLimitApiKeysServiceMock.authenticateApiKey.mockClear();
+    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('returns 429 after request count exceeds configured rate limit within window', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    // First two requests should succeed (limit = 2).
+    await request(server)
+      .get('/api/hashguard/v1/ping')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(200);
+
+    await request(server)
+      .get('/api/hashguard/v1/ping')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(200);
+
+    // Third request from the same IP must be rejected with 429 Too Many Requests.
+    await request(server)
+      .get('/api/hashguard/v1/ping')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(429);
+
+    // Upstream must NOT have been called for the rejected request.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JWT audience (`aud`) validation tests
+// A dedicated module is used so the guard is constructed with a real
+// JWT secret, allowing tokens to be signed and verified in-process.
+// ---------------------------------------------------------------------------
+
+const JWT_TEST_SECRET = 'e2e-test-jwt-secret-do-not-use-in-prod';
+
+const jwtAudienceConfigServiceMock = {
+  get: (key: string) => {
+    if (key === 'gateway.jwtSecret') return JWT_TEST_SECRET;
+    if (key === 'gateway.routeMap') {
+      return { hashguard: { v1: 'http://hashguard.internal' } };
+    }
+    return undefined;
+  },
+};
+
+const jwtAudienceApiKeysServiceMock = {
+  authenticateApiKey: jest.fn().mockResolvedValue({
+    id: 'user-1',
+    subject: 'subject-1',
+    provider: 'flowauth',
+    email: 'test@example.com',
+  }),
+};
+
+@Module({
+  controllers: [AuthController],
+  providers: [
+    JwtAuthGuard,
+    { provide: Oauth2Service, useValue: oauth2ServiceMock },
+    { provide: ApiKeysService, useValue: jwtAudienceApiKeysServiceMock },
+    { provide: ConfigService, useValue: jwtAudienceConfigServiceMock },
+    {
+      provide: IdentityService,
+      useValue: {
+        toIdentity: jest.fn((claims: { uid?: string }) => ({
+          userId: claims.uid ?? 'user-1',
+          subject: 'subject-1',
+          provider: 'flowauth',
+          scopes: [],
+          email: 'test@example.com',
+        })),
+      },
+    },
+  ],
+})
+class JwtAudienceTestModule {}
+
+describe('JWT audience validation', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [JwtAudienceTestModule],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    app.useGlobalFilters(new ProblemDetailsFilter());
+    await app.init();
+  });
+
+  beforeEach(() => {
+    jwtAudienceApiKeysServiceMock.authenticateApiKey.mockClear();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('rejects Bearer JWT that has no aud claim', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const token = sign(
+      { sub: 'user-1', uid: 'user-1', provider: 'flowauth' },
+      JWT_TEST_SECRET,
+      { algorithm: 'HS256', expiresIn: '1h' },
+    );
+
+    await request(server)
+      .get('/auth/namespaces')
+      .set('authorization', `Bearer ${token}`)
+      .expect(401);
+  });
+
+  it('rejects Bearer JWT whose aud claim targets a different service', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const token = sign(
+      {
+        sub: 'user-1',
+        uid: 'user-1',
+        provider: 'flowauth',
+        aud: 'other-service',
+      },
+      JWT_TEST_SECRET,
+      { algorithm: 'HS256', expiresIn: '1h' },
+    );
+
+    await request(server)
+      .get('/auth/namespaces')
+      .set('authorization', `Bearer ${token}`)
+      .expect(401);
+  });
+
+  it('accepts Bearer JWT with aud claim set to gatekeeper', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const token = sign(
+      { sub: 'user-1', uid: 'user-1', provider: 'flowauth', aud: 'gatekeeper' },
+      JWT_TEST_SECRET,
+      { algorithm: 'HS256', expiresIn: '1h' },
+    );
+
+    const res = await request(server)
+      .get('/auth/namespaces')
+      .set('authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = res.body as { namespaces?: unknown };
+    expect(Array.isArray(body.namespaces)).toBe(true);
+  });
+
+  it('rejects a JWT signed with a different secret even if aud is correct', async () => {
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+
+    const token = sign(
+      { sub: 'user-1', uid: 'user-1', provider: 'flowauth', aud: 'gatekeeper' },
+      'wrong-secret',
+      { algorithm: 'HS256', expiresIn: '1h' },
+    );
+
+    await request(server)
+      .get('/auth/namespaces')
+      .set('authorization', `Bearer ${token}`)
+      .expect(401);
   });
 });

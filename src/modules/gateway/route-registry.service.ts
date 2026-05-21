@@ -16,7 +16,9 @@ export class RouteRegistryService {
     namespace: string,
     version: string,
   ): Promise<ResolvedRoute | undefined> {
-    const cacheKey = `route:${namespace}:${version}`;
+    // encodeURIComponent prevents cache key collision when namespace or version
+    // contain the ':' separator (e.g. namespace="ns:v1" vs version="v1").
+    const cacheKey = `route:${encodeURIComponent(namespace)}:${encodeURIComponent(version)}`;
     const cached = await this.cacheManager.get<ResolvedRoute>(cacheKey);
     if (cached) {
       return cached;

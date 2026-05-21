@@ -64,6 +64,7 @@ export class JwtAuthGuard implements CanActivate {
     try {
       const decoded = verify(token, jwtSecret, {
         algorithms: ['HS256'],
+        audience: 'gatekeeper',
       });
       const claims = isJwtClaims(decoded) ? decoded : {};
       request.user = this.identityService.toIdentity(claims);

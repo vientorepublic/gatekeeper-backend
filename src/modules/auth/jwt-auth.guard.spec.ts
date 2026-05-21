@@ -84,7 +84,10 @@ describe('JwtAuthGuard', () => {
   it('authenticates a valid JWT and sets user', async () => {
     const toIdentity = jest.fn().mockReturnValue({ subject: 'sub-1' });
     const guard = makeGuard({ toIdentity });
-    const token = sign({ sub: 'sub-1' }, JWT_SECRET, { algorithm: 'HS256' });
+    const token = sign({ sub: 'sub-1' }, JWT_SECRET, {
+      algorithm: 'HS256',
+      audience: 'gatekeeper',
+    });
     const request = {
       headers: { authorization: `Bearer ${token}` },
       user: undefined,
