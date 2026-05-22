@@ -25,6 +25,7 @@ import type { AddressInfo } from 'node:net';
 import autocannonModule from 'autocannon';
 import { ApiKeysService } from '../../src/modules/auth/api-keys.service';
 import { GatewayProxyMiddleware } from '../../src/modules/gateway/gateway-proxy.middleware';
+import { ProxyStateService } from '../../src/modules/gateway/proxy-state.service';
 import { RouteRegistryService } from '../../src/modules/gateway/route-registry.service';
 import {
   buildUpstreamHeaders,
@@ -359,6 +360,7 @@ async function createBenchmarkApp(
 
   if (mode === 'optimized') {
     providers.push(GatewayMetricsService);
+    providers.push(ProxyStateService);
   }
 
   @Module({

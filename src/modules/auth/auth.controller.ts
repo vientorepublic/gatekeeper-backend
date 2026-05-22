@@ -50,6 +50,7 @@ export class AuthController {
   ) {}
 
   @Get('namespaces')
+  @UseGuards(JwtAuthGuard)
   getNamespaces(): NamespacesResponseDto {
     const routeMap = this.configService.get<RouteMap>('gateway.routeMap', {
       infer: true,
@@ -135,7 +136,8 @@ export class AuthController {
   ): Promise<OAuth2SessionResponseDto> {
     const result = await this.oauth2Service.createSessionFromAccessToken(
       body.accessToken,
-      body.scope,
+      // body.scope is intentionally not forwarded to prevent caller-controlled
+      // scope injection into the issued gateway JWT.
     );
 
     return {

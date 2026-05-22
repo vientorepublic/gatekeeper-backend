@@ -1,5 +1,6 @@
 import {
   HttpException,
+  HttpStatus,
   Injectable,
   NestMiddleware,
   NotFoundException,
@@ -12,6 +13,7 @@ import { Transform, Writable } from 'node:stream';
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { ApiKeysService } from '../auth/api-keys.service';
+import { ProxyStateService } from './proxy-state.service';
 import { RouteRegistryService } from './route-registry.service';
 import { GatewayMetricsService } from '../health/gateway-metrics.service';
 import {
@@ -30,6 +32,32 @@ interface ProxyPathParts extends ResolvedRequestRoute {
   tailPath: string;
 }
 
+// Response headers from upstream that must never be forwarded to clients.
+// Using a blocklist instead of an allowlist to prevent:
+//   - Upstream overriding gateway CORS policy (access-control-*)
+//   - Session-fixation via upstream Set-Cookie
+//   - Technology fingerprinting via Server / X-Powered-By
+//   - Hop-by-hop header leakage
+const BLOCKED_RESPONSE_HEADERS = new Set([
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'set-cookie',
+  'server',
+  'x-powered-by',
+  'access-control-allow-origin',
+  'access-control-allow-credentials',
+  'access-control-allow-methods',
+  'access-control-allow-headers',
+  'access-control-expose-headers',
+  'access-control-max-age',
+]);
+
 @Injectable()
 export class GatewayProxyMiddleware implements NestMiddleware {
   private readonly maxRequestBodyBytes: number;
@@ -37,16 +65,14 @@ export class GatewayProxyMiddleware implements NestMiddleware {
   private readonly proxyTimeoutMs: number;
   private readonly circuitBreakerFailureThreshold: number;
   private readonly circuitBreakerCooldownMs: number;
-  private readonly circuitState = new Map<
-    string,
-    { consecutiveFailures: number; openUntil: number }
-  >();
-
+  private readonly rateLimitWindowMs: number;
+  private readonly rateLimitMaxRequests: number;
   constructor(
     private readonly routeRegistry: RouteRegistryService,
     private readonly configService: ConfigService,
     private readonly apiKeysService: ApiKeysService,
     private readonly gatewayMetricsService: GatewayMetricsService,
+    private readonly proxyStateService: ProxyStateService,
   ) {
     this.maxRequestBodyBytes = this.getPositiveNumberConfig(
       'gateway.maxProxyRequestBodyBytes',
@@ -67,6 +93,14 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       'gateway.proxyCircuitBreakerCooldownMs',
       10_000,
     );
+    this.rateLimitWindowMs = this.getPositiveNumberConfig(
+      'gateway.rateLimitWindowMs',
+      60_000,
+    );
+    this.rateLimitMaxRequests = this.getPositiveNumberConfig(
+      'gateway.rateLimitMaxRequests',
+      100,
+    );
   }
 
   async use(req: Request, res: Response, _next: NextFunction): Promise<void> {
@@ -75,6 +109,9 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     this.gatewayMetricsService.recordRequestStarted();
 
     try {
+      const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+      await this.assertRateLimit(clientIp);
+
       const proxyPath = this.parseProxyPath(req);
       if (!proxyPath) {
         throw new NotFoundException(
@@ -199,8 +236,8 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     });
   }
 
-  private assertCircuitClosed(target: string): void {
-    const state = this.circuitState.get(target);
+  private async assertCircuitClosed(target: string): Promise<void> {
+    const state = await this.proxyStateService.getCircuitState(target);
     if (!state) {
       return;
     }
@@ -214,31 +251,32 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     }
 
     if (state.openUntil > 0) {
-      this.circuitState.delete(target);
+      await this.proxyStateService.deleteCircuitState(target);
     }
   }
 
-  private markUpstreamFailure(target: string): void {
+  private async markUpstreamFailure(target: string): Promise<void> {
     const now = Date.now();
-    const previous = this.circuitState.get(target);
+    const previous = await this.proxyStateService.getCircuitState(target);
     const consecutiveFailures = (previous?.consecutiveFailures ?? 0) + 1;
 
-    if (consecutiveFailures >= this.circuitBreakerFailureThreshold) {
-      this.circuitState.set(target, {
-        consecutiveFailures,
-        openUntil: now + this.circuitBreakerCooldownMs,
-      });
-      return;
-    }
+    const newState =
+      consecutiveFailures >= this.circuitBreakerFailureThreshold
+        ? {
+            consecutiveFailures,
+            openUntil: now + this.circuitBreakerCooldownMs,
+          }
+        : { consecutiveFailures, openUntil: 0 };
 
-    this.circuitState.set(target, {
-      consecutiveFailures,
-      openUntil: 0,
-    });
+    await this.proxyStateService.setCircuitState(
+      target,
+      newState,
+      this.circuitBreakerCooldownMs,
+    );
   }
 
-  private markUpstreamSuccess(target: string): void {
-    this.circuitState.delete(target);
+  private async markUpstreamSuccess(target: string): Promise<void> {
+    await this.proxyStateService.deleteCircuitState(target);
   }
 
   private async forwardToUpstream(
@@ -249,7 +287,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     tailPath: string,
     keepVersionPrefix: boolean,
   ): Promise<void> {
-    this.assertCircuitClosed(target);
+    await this.assertCircuitClosed(target);
 
     const rewrittenPath = this.buildUpstreamPath(
       req,
@@ -308,26 +346,21 @@ export class GatewayProxyMiddleware implements NestMiddleware {
 
       res.status(upstreamResponse.status);
       upstreamResponse.headers.forEach((value, key) => {
-        const normalizedKey = key.toLowerCase();
-        if (
-          normalizedKey === 'transfer-encoding' ||
-          normalizedKey === 'connection'
-        ) {
+        if (BLOCKED_RESPONSE_HEADERS.has(key.toLowerCase())) {
           return;
         }
-
         res.setHeader(key, value);
       });
 
       if (!upstreamResponse.body) {
-        this.markUpstreamSuccess(target);
+        await this.markUpstreamSuccess(target);
         res.end();
         return;
       }
 
       await upstreamResponse.body.pipeTo(Writable.toWeb(res));
 
-      this.markUpstreamSuccess(target);
+      await this.markUpstreamSuccess(target);
     } catch (error) {
       if (error instanceof PayloadTooLargeException) {
         this.gatewayMetricsService.recordPayloadTooLarge();
@@ -343,7 +376,7 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       }
 
       if (!(error instanceof HttpException)) {
-        this.markUpstreamFailure(target);
+        await this.markUpstreamFailure(target);
       }
 
       throw error;
@@ -363,7 +396,11 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     }
 
     const errorCode = getProxyErrorCode(error);
-    const instance = requestUrl && requestUrl.length > 0 ? requestUrl : '/';
+    // Strip query string from instance to avoid leaking sensitive query parameters
+    const rawInstance = requestUrl && requestUrl.length > 0 ? requestUrl : '/';
+    const instance = rawInstance.includes('?')
+      ? rawInstance.slice(0, rawInstance.indexOf('?'))
+      : rawInstance;
     const title = STATUS_CODES[500] ?? 'Internal Server Error';
     const body = JSON.stringify({
       title,
@@ -379,6 +416,22 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       'application/problem+json; charset=utf-8',
     );
     response.end(body);
+  }
+
+  private async assertRateLimit(clientIp: string): Promise<void> {
+    const count = await this.proxyStateService.incrementRateLimit(
+      clientIp,
+      this.rateLimitWindowMs,
+    );
+    if (count > this.rateLimitMaxRequests) {
+      this.gatewayMetricsService.recordGatewayHttpStatus(
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+      throw new HttpException(
+        'Rate limit exceeded. Please retry later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 
   private parseProxyPath(req: Request): ProxyPathParts | undefined {
@@ -413,7 +466,10 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     tailPath: string,
     keepVersionPrefix: boolean,
   ): string {
-    const tail = tailPath.length > 0 ? `/${tailPath}` : '';
+    // Strip leading slashes to prevent protocol-relative URL injection:
+    // "//evil.com/path" passed to new URL(relative, base) overrides the base host (SSRF).
+    const normalizedTail = tailPath.replace(/^\/+/, '');
+    const tail = normalizedTail.length > 0 ? `/${normalizedTail}` : '';
 
     const basePath = keepVersionPrefix ? `/${version}${tail}` : tail || '/';
 
