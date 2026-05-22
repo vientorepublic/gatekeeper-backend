@@ -5,8 +5,11 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { createCorsMiddleware } from './common/middleware/cors.middleware';
+import { preloadRouteMapFromUrl } from './config/route-map-loader';
 
 async function bootstrap() {
+  await preloadRouteMapFromUrl();
+
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,

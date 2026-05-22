@@ -126,7 +126,11 @@ function normalizeRouteMap(value: unknown): RouteMap {
 
 function parseRouteMap(raw?: string): RouteMap {
   if (!raw) {
-    throw new Error('ROUTE_MAP environment variable is required');
+    throw new Error(
+      'Route map is not configured. ' +
+        'Set the ROUTE_MAP environment variable to a JSON route map, ' +
+        'or set ROUTE_MAP_URL to a URL from which the route map JSON will be fetched at startup.',
+    );
   }
 
   try {
