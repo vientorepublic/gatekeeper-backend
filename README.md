@@ -34,7 +34,8 @@ Gatekeeper 백엔드(NestJS) 저장소입니다.
 - `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부 (기본 `false` 권장)
 - `DB_MIGRATIONS_RUN`: 서버 시작 시 미적용 마이그레이션 자동 실행 여부 (기본 `true`)
 - `DB_LOGGING`: SQL 로깅 여부 (기본 `false`)
-- `ROUTE_MAP`: 업스트림 매핑 JSON (**필수**) — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
+- `ROUTE_MAP`: 업스트림 매핑 JSON — `ROUTE_MAP_URL`과 둘 중 하나는 **필수** — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
+- `ROUTE_MAP_URL`: 라우트 맵 JSON을 HTTP(S)로 제공하는 URL — 서버 시작 시 해당 URL에서 라우트 맵을 가져와 `ROUTE_MAP`으로 사용 (`ROUTE_MAP`이 설정된 경우 무시됨)
 - `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
 - `CORS_ORIGINS`: 게이트웨이 자체 엔드포인트(`/health`, `/auth/...`)에 허용할 Origin 목록 (콤마 구분, 기본 `http://localhost:5173`) — 게이트웨이 프록시 경로(`/api/...`)는 항상 전체 개방
 - `OAUTH2_SERVER`: FlowAuth 서버 URL
@@ -76,7 +77,29 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
 
 ## ROUTE_MAP 설정
 
-`ROUTE_MAP` 환경 변수는 JSON 객체이며, 키는 namespace 이름입니다.  
+라우트 맵은 `ROUTE_MAP` 또는 `ROUTE_MAP_URL` 중 하나로 제공합니다.
+
+| 방법            | 설명                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `ROUTE_MAP`     | JSON 문자열을 환경 변수에 직접 설정                                                                        |
+| `ROUTE_MAP_URL` | HTTP(S) URL을 지정하면 서버 시작 시 해당 URL에서 JSON을 가져옴. `ROUTE_MAP`이 이미 설정된 경우 무시됩니다. |
+
+두 변수가 모두 설정된 경우 `ROUTE_MAP`이 우선합니다.  
+둘 다 없으면 서버 시작이 실패합니다.
+
+### ROUTE_MAP_URL 사용 예시
+
+```bash
+ROUTE_MAP_URL=http://config-server.internal/gatekeeper/routes.json
+```
+
+- URL은 `http://` 또는 `https://` 스킴만 허용됩니다.
+- 응답 Content-Type이 `application/json`이 아닌 경우 경고 로그를 출력하지만 파싱은 계속 시도합니다.
+- URL 도달 불가 또는 HTTP 오류 응답 시 서버 시작이 실패합니다.
+
+---
+
+`ROUTE_MAP` JSON 객체의 키는 namespace 이름입니다.  
 엔트리 형식은 세 가지를 지원합니다.
 
 ### 1. 문자열 타겟 (버전 프리픽스 유지)
