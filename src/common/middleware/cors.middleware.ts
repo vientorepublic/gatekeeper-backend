@@ -26,12 +26,15 @@ export function createCorsMiddleware(
     if (req.path.startsWith('/api/')) {
       const origin = req.headers.origin;
       if (origin) {
-        // Browser cross-origin request: validate against configured allowed origins.
-        // Unknown origins receive no CORS headers, so the browser enforces same-origin policy.
         if (corsOrigins.includes(origin)) {
+          // Known origin: reflect with credentials allowed.
           res.setHeader('Access-Control-Allow-Origin', origin);
           res.setHeader('Access-Control-Allow-Credentials', 'true');
           res.setHeader('Vary', 'Origin');
+        } else {
+          // Unknown origin: gateway proxy routes are fully open, use wildcard.
+          // Wildcard cannot be combined with Access-Control-Allow-Credentials.
+          res.setHeader('Access-Control-Allow-Origin', '*');
         }
       } else {
         // Non-browser (server-to-server) request: no Origin header, wildcard is safe.
