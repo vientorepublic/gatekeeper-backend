@@ -162,10 +162,7 @@ export class Oauth2Service {
     let userInfo: Record<string, unknown>;
 
     try {
-      userInfo = (await client.getUserInfo(tokens.access_token)) as Record<
-        string,
-        unknown
-      >;
+      userInfo = await client.getUserInfo(tokens.access_token);
     } catch (error) {
       this.logger.error(
         'OAuth2 userinfo request failed',
@@ -206,7 +203,7 @@ export class Oauth2Service {
     codeVerifier: string,
   ): Promise<TokenPayload> {
     try {
-      return (await client.exchangeCode(code, codeVerifier)) as TokenPayload;
+      return await client.exchangeCode(code, codeVerifier);
     } catch (error) {
       this.logger.error(
         'OAuth2 token exchange failed',
@@ -221,7 +218,7 @@ export class Oauth2Service {
     refreshToken: string,
   ): Promise<TokenPayload> {
     try {
-      return (await client.refreshToken(refreshToken)) as TokenPayload;
+      return await client.refreshToken(refreshToken);
     } catch (error) {
       this.logger.error(
         'OAuth2 token refresh failed',
