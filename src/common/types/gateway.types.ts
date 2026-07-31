@@ -16,9 +16,7 @@ export interface VersionedNamespaceRoute {
 }
 
 export type RouteMapEntry =
-  | string
-  | NamespaceRouteMap
-  | VersionedNamespaceRoute;
+  string | NamespaceRouteMap | VersionedNamespaceRoute;
 export type RouteMap = Record<string, RouteMapEntry>;
 
 export interface ResolvedRoute {
