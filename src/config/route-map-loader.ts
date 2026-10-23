@@ -25,7 +25,7 @@ export async function preloadRouteMapFromUrl(): Promise<void> {
   try {
     parsedUrl = new URL(url);
   } catch {
-    throw new Error(`ROUTE_MAP_URL is not a valid URL: "${url}"`);
+    throw new Error('ROUTE_MAP_URL is not a valid URL');
   }
 
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
@@ -34,21 +34,19 @@ export async function preloadRouteMapFromUrl(): Promise<void> {
     );
   }
 
-  logger.log(`Fetching route map from ROUTE_MAP_URL: ${url}`);
+  logger.log('Fetching remote route map');
 
   let response: Response;
   try {
-    response = await fetch(url);
+    response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   } catch (err) {
-    throw new Error(`Failed to reach ROUTE_MAP_URL "${url}": ${String(err)}`, {
+    throw new Error('Failed to reach ROUTE_MAP_URL', {
       cause: err,
     });
   }
 
   if (!response.ok) {
-    throw new Error(
-      `ROUTE_MAP_URL "${url}" responded with HTTP ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`ROUTE_MAP_URL responded with HTTP ${response.status}`);
   }
 
   const contentType = response.headers.get('content-type') ?? '';

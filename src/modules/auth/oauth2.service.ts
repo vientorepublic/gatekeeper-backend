@@ -13,6 +13,10 @@ import type { Cache } from 'cache-manager';
 import { FlowAuthClient, OAuth2Scope } from 'flowauth-oauth2-client';
 import { UsersService, type OAuth2UserProfile } from './users.service';
 import type { UserEntity } from './entities/user.entity';
+import {
+  isRecord,
+  isNonEmptyString,
+} from '../../common/utils/validation.utils';
 
 interface OAuth2StatePayload {
   state: string;
@@ -68,11 +72,15 @@ export class Oauth2Service {
     refreshToken: string | null;
     oauthAccessTokenExpiresIn: number | null;
   }> {
-    const statePayload = await this.cacheManager.get<OAuth2StatePayload>(
+    const statePayload = await this.cacheManager.get<unknown>(
       this.getStateCacheKey(state),
     );
 
-    if (!statePayload || statePayload.state !== state) {
+    if (
+      !isRecord(statePayload) ||
+      statePayload.state !== state ||
+      !isNonEmptyString(statePayload.codeVerifier)
+    ) {
       throw new BadRequestException('Invalid OAuth2 state');
     }
 
@@ -166,11 +174,16 @@ export class Oauth2Service {
     } catch (error) {
       this.logger.error(
         'OAuth2 userinfo request failed',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.name : 'UnknownError',
       );
-      throw new BadGatewayException('OAuth2 userinfo request failed');
+      throw new BadGatewayException('OAuth2 userinfo request failed', {
+        cause: error,
+      });
     }
 
+    if (!isRecord(userInfo)) {
+      throw new BadGatewayException('Invalid OAuth2 userinfo response');
+    }
     const subject = this.extractString(userInfo, ['sub', 'id', 'user_id']);
     if (!subject) {
       throw new UnauthorizedException('Unable to resolve OAuth2 subject');
@@ -203,13 +216,15 @@ export class Oauth2Service {
     codeVerifier: string,
   ): Promise<TokenPayload> {
     try {
-      return await client.exchangeCode(code, codeVerifier);
+      return this.validateTokens(await client.exchangeCode(code, codeVerifier));
     } catch (error) {
       this.logger.error(
         'OAuth2 token exchange failed',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.name : 'UnknownError',
       );
-      throw new BadGatewayException('OAuth2 token exchange failed');
+      throw new BadGatewayException('OAuth2 token exchange failed', {
+        cause: error,
+      });
     }
   }
 
@@ -218,14 +233,41 @@ export class Oauth2Service {
     refreshToken: string,
   ): Promise<TokenPayload> {
     try {
-      return await client.refreshToken(refreshToken);
+      return this.validateTokens(await client.refreshToken(refreshToken));
     } catch (error) {
       this.logger.error(
         'OAuth2 token refresh failed',
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.name : 'UnknownError',
       );
-      throw new BadGatewayException('OAuth2 token refresh failed');
+      throw new BadGatewayException('OAuth2 token refresh failed', {
+        cause: error,
+      });
     }
+  }
+
+  private validateTokens(value: unknown): TokenPayload {
+    if (
+      !isRecord(value) ||
+      !isNonEmptyString(value.access_token) ||
+      (value.refresh_token != null && !isNonEmptyString(value.refresh_token)) ||
+      (value.scope !== undefined && typeof value.scope !== 'string') ||
+      (value.expires_in != null &&
+        (typeof value.expires_in !== 'number' ||
+          !Number.isFinite(value.expires_in) ||
+          value.expires_in < 0))
+    ) {
+      throw new BadGatewayException('Invalid OAuth2 token response');
+    }
+    return {
+      access_token: value.access_token,
+      refresh_token:
+        typeof value.refresh_token === 'string'
+          ? value.refresh_token
+          : undefined,
+      expires_in:
+        typeof value.expires_in === 'number' ? value.expires_in : undefined,
+      scope: typeof value.scope === 'string' ? value.scope : undefined,
+    };
   }
 
   private issueGatewayToken(user: UserEntity, scopeClaim?: unknown): string {
@@ -271,6 +313,7 @@ export class Oauth2Service {
     if (scopes.length === 0) {
       return [OAuth2Scope.OPENID, OAuth2Scope.PROFILE];
     }
+    // The SDK enum cannot represent custom OAuth2 scopes supplied by server configuration.
     return scopes as OAuth2Scope[];
   }
 
@@ -319,7 +362,7 @@ export class Oauth2Service {
   ): string | undefined {
     for (const key of keys) {
       const value = source[key];
-      if (typeof value === 'string' && value.length > 0) {
+      if (isNonEmptyString(value)) {
         return value;
       }
     }
@@ -347,17 +390,5 @@ export class Oauth2Service {
     } catch {
       return undefined;
     }
-  }
-
-  private getErrorMessage(error: unknown): string {
-    if (error instanceof Error && error.message) {
-      return error.message;
-    }
-
-    if (typeof error === 'string') {
-      return error;
-    }
-
-    return 'Unknown error';
   }
 }

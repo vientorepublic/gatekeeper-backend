@@ -107,4 +107,19 @@ describe('JwtAuthGuard', () => {
       UnauthorizedException,
     );
   });
+
+  it.each([{}, { sub: 'sub-1', uid: 42 }, { sub: ' ', scope: 'openid' }])(
+    'rejects signed tokens with invalid identity claims: %j',
+    async (claims) => {
+      const token = sign(claims, JWT_SECRET, {
+        algorithm: 'HS256',
+        audience: 'gatekeeper',
+      });
+      await expect(
+        makeGuard().canActivate(
+          createContext({ headers: { authorization: `Bearer ${token}` } }),
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    },
+  );
 });

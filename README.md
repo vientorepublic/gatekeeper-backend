@@ -1,326 +1,91 @@
-# Gatekeeper API Gateway
+# Gatekeeper Backend
 
-Gatekeeper 백엔드(NestJS) 저장소입니다.
+네임스페이스별 업스트림 라우팅, FlowAuth 로그인, 내부 JWT 세션과 API 키 관리를 제공하는 NestJS API Gateway입니다. MariaDB에 사용자·키 정보를 저장하며 Redis 또는 메모리에서 캐시·프록시 상태를 관리합니다.
 
-프로젝트 전반 소개와 멀티 리포지토리 구조는 루트 README를 참고하세요.
+## 시작하기
 
-## 핵심 설계
-
-- 게이트웨이 프록시 엔드포인트 규칙: `/api/{namespace}/{version}/...`
-- 게이트웨이 자체 엔드포인트(`/health`, `/auth/...`)와 프록시 엔드포인트를 경로 레벨에서 명시적으로 분리
-- 업스트림 포워딩은 `namespace`, `version`, `*path` 라우트 파라미터를 기준으로 수행
-- 인증: FlowAuth OAuth2 Authorization Code Grant + 내부 JWT + API Key
-- 사용자/API Key 저장: TypeORM + MariaDB
-- 캐시가 필요한 경우 Redis 사용 (REDIS_URL 설정 시 Redis 스토어 사용)
-- 전역 요청 검증: ValidationPipe(`transform`, `whitelist`, `forbidNonWhitelisted`) 적용
-
-## 환경 변수
-
-`.env.example`를 참고하세요.
-
-- `PORT`: 서버 포트 (기본 `3000`)
-- `JWT_HMAC_SECRET`: 내부 JWT 서명 비밀키 (**필수** — 운영 환경에서 반드시 강한 랜덤 값으로 설정)
-- `JWT_EXPIRES_IN_SECONDS`: 내부 JWT 만료(초, 기본 `3600`)
-- `MAX_PROXY_REQUEST_BODY_BYTES`: 프록시 요청 본문 최대 크기(바이트, 기본 `1048576`)
-- `PROXY_TIMEOUT_MS`: 업스트림 프록시 타임아웃(밀리초, 기본 `15000`)
-- `PROXY_CIRCUIT_BREAKER_FAILURE_THRESHOLD`: 회로 차단기 연속 실패 임계값(기본 `3`)
-- `PROXY_CIRCUIT_BREAKER_COOLDOWN_MS`: 회로 차단기 재시도 대기 시간(밀리초, 기본 `10000`)
-- `DB_HOST`: MariaDB 호스트 (기본 `127.0.0.1`)
-- `DB_PORT`: MariaDB 포트 (기본 `3306`)
-- `DB_USERNAME`: MariaDB 사용자명 (기본 `gatekeeper`)
-- `DB_PASSWORD`: MariaDB 비밀번호
-- `DB_NAME`: MariaDB 데이터베이스명 (기본 `gatekeeper`)
-- `DB_CHARSET`: MariaDB 문자셋 (기본 `utf8mb4`)
-- `DB_SYNCHRONIZE`: TypeORM 스키마 자동 동기화 여부 (기본 `false` 권장)
-- `DB_MIGRATIONS_RUN`: 서버 시작 시 미적용 마이그레이션 자동 실행 여부 (기본 `true`)
-- `DB_LOGGING`: SQL 로깅 여부 (기본 `false`)
-- `ROUTE_MAP`: 업스트림 매핑 JSON — `ROUTE_MAP_URL`과 둘 중 하나는 **필수** — 아래 [ROUTE_MAP 설정](#route_map-설정) 참고
-- `ROUTE_MAP_URL`: 라우트 맵 JSON을 HTTP(S)로 제공하는 URL — 서버 시작 시 해당 URL에서 라우트 맵을 가져와 `ROUTE_MAP`으로 사용 (`ROUTE_MAP`이 설정된 경우 무시됨)
-- `REDIS_URL`: Redis 연결 주소 (미설정 시 메모리 캐시)
-- `CORS_ORIGINS`: 게이트웨이 자체 엔드포인트(`/health`, `/auth/...`)에 허용할 Origin 목록 (콤마 구분, 기본 `http://localhost:5173`) — 게이트웨이 프록시 경로(`/api/...`)는 항상 전체 개방
-- `OAUTH2_SERVER`: FlowAuth 서버 URL
-- `OAUTH2_CLIENT_ID`: OAuth2 클라이언트 ID
-- `OAUTH2_CLIENT_SECRET`: OAuth2 클라이언트 시크릿
-- `OAUTH2_REDIRECT_URI`: 인증 콜백 URI
-- `OAUTH2_SCOPES`: 요청 스코프 목록 (콤마 구분, 기본 `openid,profile`)
-- `OAUTH2_ISSUER`: 업스트림 전달용 발급자 힌트 값
-- `OAUTH2_AUDIENCE`: 업스트림 전달용 대상자 힌트 값
-
-## 입력 검증 및 에러 응답
-
-- 모든 HTTP 요청은 전역 ValidationPipe로 검증됩니다.
-- DTO에 정의되지 않은 필드는 `400 Bad Request`로 거부됩니다.
-- 주요 인증/세션 입력(`code`, `state`, `accessToken`, `refreshToken`, `label`)은 공백 제거 후 길이/필수 조건을 검증합니다.
-- API Key 폐기 엔드포인트의 `:id`는 UUID v4 형식이어야 하며, 형식이 잘못되면 `400 Bad Request`를 반환합니다.
-- 게이트웨이 프록시 본문이 `MAX_PROXY_REQUEST_BODY_BYTES`를 초과하면 `413 Payload Too Large`를 반환합니다.
-- 업스트림 호출 실패는 `500 Internal Server Error`가 반환됩니다.
-- 업스트림 타임아웃은 `500 Internal Server Error` + `errorCode: "UPSTREAM_TIMEOUT"`으로 반환됩니다.
-- 동일 업스트림이 연속 실패 임계값을 넘기면 회로 차단기가 열리고, 냉각 시간 동안 `503 Service Unavailable`을 반환합니다.
-
-## JWT_HMAC_SECRET 생성 가이드
-
-운영 환경에서는 예측 가능한 문자열 대신 충분히 긴 랜덤 키를 사용하세요.
-
-OpenSSL 사용:
+아래 명령은 이 저장소 디렉터리에서 실행합니다. Node.js 24.15 이상인 24.x와 npm, 접속 가능한 MariaDB와 생성된 데이터베이스·사용자가 필요합니다. 로그인에는 FlowAuth 클라이언트 등록이 필요합니다.
 
 ```bash
-openssl rand -base64 48
+npm ci
+cp .env.example .env
 ```
 
-Node.js 사용:
+기존 `.env`가 있으면 복사 대신 필요한 항목만 갱신합니다.
+
+## 환경 설정
+
+실행 전에 다음을 설정하세요. 전체 변수와 기본값은 [환경 설정 문서](docs/configuration.md)를 참고하세요.
+
+- `DB_*`: MariaDB 접속 정보
+- `JWT_HMAC_SECRET`: `openssl rand -base64 48` 등으로 생성한 비밀키
+- `ROUTE_MAP` 또는 `ROUTE_MAP_URL`: 업스트림 라우팅 설정
+- `OAUTH2_*`: FlowAuth 서버·클라이언트·콜백 정보
+- `REDIS_URL`: 예제는 로컬 Redis를 사용합니다. 메모리 모드로 실행하려면 비웁니다.
+- `CORS_ORIGINS`: 프론트엔드 Origin. 로컬 Vite 기본 주소는 `http://localhost:5173`입니다.
+
+웹 콘솔과 함께 사용하려면 백엔드 `OAUTH2_REDIRECT_URI`와 FlowAuth에 등록한 URI를 프론트엔드 주소(예: `http://localhost:5173/`)로 맞춥니다. 예제 파일의 백엔드 콜백 URI는 웹 콘솔 로그인 흐름에 맞게 변경해야 합니다.
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
-```
-
-생성한 값을 `.env`의 `JWT_HMAC_SECRET`에 설정합니다.
-
-## ROUTE_MAP 설정
-
-라우트 맵은 `ROUTE_MAP` 또는 `ROUTE_MAP_URL` 중 하나로 제공합니다.
-
-| 방법            | 설명                                                                                                       |
-| --------------- | ---------------------------------------------------------------------------------------------------------- |
-| `ROUTE_MAP`     | JSON 문자열을 환경 변수에 직접 설정                                                                        |
-| `ROUTE_MAP_URL` | HTTP(S) URL을 지정하면 서버 시작 시 해당 URL에서 JSON을 가져옴. `ROUTE_MAP`이 이미 설정된 경우 무시됩니다. |
-
-두 변수가 모두 설정된 경우 `ROUTE_MAP`이 우선합니다.  
-둘 다 없으면 서버 시작이 실패합니다.
-
-### ROUTE_MAP_URL 사용 예시
-
-```bash
-ROUTE_MAP_URL=http://config-server.internal/gatekeeper/routes.json
-```
-
-- URL은 `http://` 또는 `https://` 스킴만 허용됩니다.
-- 응답 Content-Type이 `application/json`이 아닌 경우 경고 로그를 출력하지만 파싱은 계속 시도합니다.
-- URL 도달 불가 또는 HTTP 오류 응답 시 서버 시작이 실패합니다.
-
----
-
-`ROUTE_MAP` JSON 객체의 키는 namespace 이름입니다.  
-엔트리 형식은 세 가지를 지원합니다.
-
-### 1. 문자열 타겟 (버전 프리픽스 유지)
-
-```json
-{
-  "billing": "http://billing.internal"
-}
-```
-
-`/api/billing/v1/invoices` → `http://billing.internal/v1/invoices`  
-`/{namespace}`만 제거되고 `/{version}/...`는 업스트림에 그대로 전달됩니다.
-
-### 2. 레거시 플랫 버전 맵
-
-```json
-{
-  "orders": {
-    "v1": "http://orders-v1.internal",
-    "v2": "http://orders-v2.internal"
-  }
-}
-```
-
-`/api/orders/v1/items` → `http://orders-v1.internal/items`  
-`/{namespace}/{version}`이 제거되어 전달됩니다.
-
-### 3. 버전 맵 + 퍼블릭 설정 (권장)
-
-```json
-{
-  "catalog": {
-    "versions": {
-      "v1": "http://catalog.internal"
-    },
-    "public": true
-  }
-}
-```
-
-`public: true`로 설정하면 해당 namespace의 **모든 경로**가 Bearer 토큰 검증을 건너뜁니다.
-
-### 4. 경로 수준 퍼블릭 설정 (`publicPaths`)
-
-네임스페이스 내 **특정 경로/메서드만** 인증을 우회하도록 지정할 수 있습니다.
-
-```json
-{
-  "hashguard": {
-    "versions": {
-      "v1": "http://hashguard.internal"
-    },
-    "publicPaths": [
-      "/health",
-      { "path": "/users/register", "methods": ["POST"] },
-      { "path": "/docs/*" }
-    ]
-  }
-}
-```
-
-#### `publicPaths` 규칙 형식
-
-| 형식                      | 예시                                                 | 설명                                   |
-| ------------------------- | ---------------------------------------------------- | -------------------------------------- |
-| 문자열                    | `"/health"`                                          | 해당 경로에 모든 메서드 허용           |
-| 객체 (`path`만)           | `{ "path": "/ping" }`                                | 해당 경로에 모든 메서드 허용           |
-| 객체 (`path` + `methods`) | `{ "path": "/users/register", "methods": ["POST"] }` | 지정 메서드만 허용, 나머지는 인증 필요 |
-| 와일드카드 접미사         | `{ "path": "/docs/*" }`                              | `/docs/` 및 하위 경로 전체 허용        |
-
-- `path`는 namespace 루트(`/api/{namespace}/{version}`) 기준 상대 경로입니다.
-- `methods`를 생략하면 모든 HTTP 메서드에 적용됩니다. 값은 대소문자 구분 없이 처리됩니다.
-- `/*` 접미사: `/docs/*`는 `/docs`(정확히 일치), `/docs/`, `/docs/anything`에 모두 매칭됩니다.
-- `public: true`와 `publicPaths`를 동시에 지정하면 `public: true`가 우선됩니다.
-
-### 전체 예시
-
-```json
-{
-  "billing": "http://billing.internal",
-  "orders": {
-    "v1": "http://orders-v1.internal",
-    "v2": "http://orders-v2.internal"
-  },
-  "open-api": {
-    "versions": { "v1": "http://open-api.internal" },
-    "public": true
-  },
-  "hashguard": {
-    "versions": { "v1": "http://hashguard.internal" },
-    "publicPaths": [
-      "/health",
-      { "path": "/users/register", "methods": ["POST"] },
-      { "path": "/docs/*" }
-    ]
-  }
-}
-```
-
-## 실행
-
-```bash
-npm install
-npm run build
 npm run start:dev
 ```
 
-## 테스트
+기본 주소는 `http://localhost:3000`입니다. 다른 터미널에서 `curl http://localhost:3000/health`로 HTTP 응답을 확인합니다. `/health`는 DB·Redis·업스트림을 검사하는 readiness 진단은 아닙니다. 기본 설정은 시작 시 미적용 migration을 실행하므로 대상 DB를 먼저 확인하세요.
+
+## 주요 동작
+
+- `/auth/...`: OAuth authorize/callback/session/refresh, namespace·API 키 관리
+- `/api/{namespace}/{version}/...`: 라우트와 API 키를 검증한 뒤 업스트림으로 전달
+- `/health`, `/health/metrics`: 프로세스 상태와 프록시 런타임 지표
+- 프록시는 본문 크기·시간 제한, IP별 요청 제한, 회로 차단기를 적용합니다.
+
+관리 API는 내부 JWT 또는 `x-api-key`로 인증합니다. 보호된 프록시는 `Authorization: Bearer <issued-api-key>`를 사용합니다. 내부 JWT를 프록시 API 키 대신 사용하지 않습니다. 세부 계약은 [API·인증 문서](docs/api.md)를 참고하세요.
+
+## 코드 구조
+
+```text
+src/
+  main.ts, app.module.ts       Bootstrap and module wiring
+  config/                     Environment and route-map validation/loading
+  modules/auth/               OAuth, JWT, users, API keys, DTOs
+  modules/gateway/            Route registry, proxy, rate/circuit state
+  modules/health/, modules/cron/  Metrics and scheduled collection
+  database/, migrations/      MariaDB wiring and schema changes
+  cache/, common/             Cache, filters, CORS, validation, shutdown
+test/                         HTTP integration tests and proxy benchmark
+```
+
+## 검증
 
 ```bash
-# unit tests
-npm test
-
-# e2e tests
+npm run lint
+npx tsc --noEmit --incremental false
+npm run build
+npm test -- --runInBand
 npm run test:e2e
-
-# proxy benchmark (optimized vs legacy)
-npm run bench:proxy
 ```
 
-e2e 테스트는 아래 시나리오를 포함합니다.
+`lint`는 자동 수정하므로 diff를 확인합니다. Jest 스크립트에는 NestJS 의존성을 위한 VM module 옵션이 포함되어 있습니다. 통합 테스트는 로컬 HTTP 업스트림과 mock 서비스를 사용하며 운영 MariaDB·Redis·FlowAuth 연결 검증을 대신하지 않습니다.
 
-- 프록시 경로 재작성(`version map`, `direct namespace target`) 검증
-- 인증 실패(헤더 누락/빈 Bearer) 검증
-- 미존재 라우트 매핑(404), 업스트림 장애(500), 본문 크기 초과(413) 검증
-- 업스트림 타임아웃(500 + `UPSTREAM_TIMEOUT`), 회로 차단기 오픈(503), `/health/metrics` 응답 검증
-- Auth 입력 DTO 검증(필수값, 미정의 필드 차단, 길이 제한, UUID 파라미터 검증)
+프록시 변경 시 `npm run bench:proxy`도 실행합니다. 조건·출력·성능 판정 기준은 [운영·벤치마크 문서](docs/operations.md)를 따릅니다.
 
-## 운영 관측
-
-- 헬스체크: `GET /health`
-- 게이트웨이 런타임 매트릭: `GET /health/metrics`
-
-`/health/metrics`는 아래 정보를 제공합니다.
-
-- `proxy.total`, `proxy.inFlight`, `proxy.latencyMsAvg`
-- `proxy.upstream2xx/3xx/4xx/5xx`
-- `proxy.gateway4xx/5xx`
-- `proxy.timeouts`, `proxy.circuitOpenRejections`, `proxy.payloadTooLarge`
-- `runtime.memoryRssBytes`, `runtime.heapUsedBytes`, `runtime.eventLoopLagMsAvg`
-
-예시:
-
-```json
-{
-  "generatedAt": "2026-04-07T10:10:00.000Z",
-  "proxy": {
-    "total": 4123,
-    "upstream2xx": 3900,
-    "upstream3xx": 10,
-    "upstream4xx": 120,
-    "upstream5xx": 50,
-    "gateway4xx": 30,
-    "gateway5xx": 13,
-    "timeouts": 8,
-    "circuitOpenRejections": 2,
-    "payloadTooLarge": 4,
-    "inFlight": 3,
-    "latencyMsAvg": 6.7
-  },
-  "runtime": {
-    "memoryRssBytes": 183025664,
-    "heapUsedBytes": 69513216,
-    "eventLoopLagMsAvg": 1.2
-  }
-}
-```
-
-## 프록시 벤치마크
-
-`npm run bench:proxy`는 동일 조건에서 아래 두 구현을 비교합니다.
-
-- `optimized`: 현재 스트리밍 기반 프록시 미들웨어
-- `legacy`: 이전 버퍼링 기반(요청/응답 전체 메모리 적재) 동작을 벤치마크 내부에서 재현한 미들웨어
-
-출력 항목:
-
-- `rps`(throughput), `p99Ms`(지연), `errors`, `timeouts`, `rssDeltaMB`
-- 시나리오별 `throughput gain`, `p99 latency reduction`
-
-벤치마크 제어용 환경변수:
-
-- `BENCH_DURATION_SECONDS` (기본 `10`)
-- `BENCH_CONNECTIONS` (기본 `60`)
-- `BENCH_PAYLOAD_BYTES` (기본 `262144` = 256KB)
-- `BENCH_ASSERT` (`1`로 설정 시 최소 성능 향상 기준 미달이면 실패)
-- `BENCH_MIN_THROUGHPUT_GAIN_PERCENT` (`BENCH_ASSERT=1`일 때 사용, 기본 `5`)
-
-권장 실행 예시:
+## 빌드와 실행
 
 ```bash
-BENCH_DURATION_SECONDS=20 \
-BENCH_CONNECTIONS=100 \
-BENCH_PAYLOAD_BYTES=1048576 \
-npm run bench:proxy
+npm run build
+npm run start:prod
 ```
 
-## 요청 예시
+Dockerfile은 Node.js 24 기반으로 빌드하고 3000 포트에서 비루트 사용자로 실행합니다. `NODE_ENV=production`에서는 기본 JWT 비밀키 사용 시 시작이 거부됩니다. DB 자동 동기화는 끄고 migration으로 스키마를 관리하세요.
 
-- 헬스체크: `GET /health`
-- 런타임 매트릭: `GET /health/metrics`
-- 프록시 요청: `GET /api/{namespace}/{version}/...`
-- OAuth2 인증 시작: `GET /auth/oauth2/authorize`
-- OAuth2 콜백 처리: `GET /auth/oauth2/callback?code=...&state=...`
-- OAuth2 Access Token으로 세션 생성: `POST /auth/oauth2/session`
-- 관리 가능한 namespace 조회: `GET /auth/namespaces`
-- API Key 조회(인증 필요): `GET /auth/api-keys/:namespace`
-- API Key 발급(인증 필요): `POST /auth/api-keys/:namespace`
-- API Key 폐기(인증 필요): `DELETE /auth/api-keys/:namespace/:id`
+메타 저장소 Compose를 사용한다면 컨테이너 내부 DB/Redis 주소와 호스트 공개 포트를 구분해야 합니다. 배포 설정과 관측 항목은 [운영 문서](docs/operations.md)를 참고하세요.
 
-## 인증 흐름
+## 상세 문서
 
-1. `GET /auth/oauth2/authorize`로 FlowAuth 인증 URL 발급
-2. 사용자 인증 후 콜백에서 `code`, `state` 수신
-3. SDK가 Authorization Code를 Access Token으로 교환하고 사용자 정보를 조회
-4. 로컬 DB(`users`)에 사용자가 없으면 생성, 있으면 갱신
-5. 내부 Gateway JWT를 발급하여 클라이언트에 반환
+- [환경 설정](docs/configuration.md): 변수, 기본값, DB·OAuth·CORS
+- [라우팅 설정](docs/routing.md): 맵 형식, 경로 재작성, 공개 경로 규칙
+- [API와 인증](docs/api.md): 엔드포인트, 입력·응답·인증 경계
+- [운영과 벤치마크](docs/operations.md): 실행 환경, 지표, 장애 확인, 성능 검증
+- [package.json](package.json), [.env.example](.env.example): 실제 스크립트·의존성과 설정 예제
 
-Gateway 보호 엔드포인트는 아래 인증 중 하나를 허용합니다.
-
-- `Authorization: Bearer <gateway-jwt>`
-- `x-api-key: <issued-api-key>`
-
-API 키는 `ROUTE_MAP`에 정의된 namespace 단위로 분리되어 저장/검증됩니다.
+메타 저장소 안에서는 상위 `AGENTS.md`, `docs/development-workflow.md`, `docs/github-release-workflow.md`, `agent_memories/README.md`를 먼저 읽습니다. 단독 clone에는 이 문서들이 포함되지 않습니다. 새 작업은 최신 dev에서 피처를 분기하며 GitHub 작업에는 gh CLI를 사용합니다. 버전·lockfile·병합·릴리즈 규칙은 상위 지침을 따릅니다.

@@ -1,5 +1,6 @@
 import {
   HttpException,
+  BadRequestException,
   HttpStatus,
   Injectable,
   NestMiddleware,
@@ -9,7 +10,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
-import { Transform, Writable } from 'node:stream';
+import { Readable, Transform, Writable } from 'node:stream';
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { ApiKeysService } from '../auth/api-keys.service';
@@ -20,6 +21,7 @@ import {
   buildUpstreamHeaders,
   getProxyErrorCode,
   isResolvedRoute,
+  isSafeProxyPath,
   matchesPublicPath,
 } from './gateway-proxy.utils';
 
@@ -151,6 +153,9 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         resolvedRoute.keepVersionPrefix,
       );
     } catch (error) {
+      if (error instanceof PayloadTooLargeException) {
+        this.gatewayMetricsService.recordPayloadTooLarge();
+      }
       if (error instanceof HttpException) {
         this.gatewayMetricsService.recordGatewayHttpStatus(error.getStatus());
         throw error;
@@ -168,7 +173,9 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       infer: true,
     });
 
-    return typeof configuredValue === 'number' && configuredValue > 0
+    return typeof configuredValue === 'number' &&
+      Number.isFinite(configuredValue) &&
+      configuredValue > 0
       ? configuredValue
       : fallback;
   }
@@ -295,11 +302,10 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       tailPath,
       keepVersionPrefix,
     );
-    const upstreamUrl = new URL(rewrittenPath, target).toString();
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      timeoutController.abort();
-    }, this.proxyTimeoutMs);
+    const upstreamUrl = new URL(rewrittenPath, target);
+    if (upstreamUrl.origin !== new URL(target).origin) {
+      throw new BadRequestException('Invalid proxy path');
+    }
 
     const shouldForwardBody = this.isRequestBodyAllowed(req.method);
 
@@ -323,13 +329,20 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         `Request body exceeds maximum size of ${this.maxRequestBodyBytes} bytes`,
       );
     }
+    // Node's stream/web and lib.dom differ in their BYOB types despite sharing the runtime stream API.
     const requestBody: BodyInit | undefined = shouldForwardBody
-      ? ((rawBody as unknown as BodyInit | undefined) ??
-        (req.pipe(
-          this.createLimitedRequestBodyStream(req),
-        ) as unknown as BodyInit))
+      ? rawBody !== undefined
+        ? new Uint8Array(rawBody)
+        : (Readable.toWeb(
+            req.pipe(this.createLimitedRequestBodyStream(req)),
+          ) as unknown as BodyInit)
       : undefined;
     const isStreamBody = shouldForwardBody && rawBody === undefined;
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(
+      () => timeoutController.abort(),
+      this.proxyTimeoutMs,
+    );
 
     try {
       const requestInit: RequestInit & { duplex?: 'half' } = {
@@ -341,12 +354,26 @@ export class GatewayProxyMiddleware implements NestMiddleware {
         duplex: isStreamBody ? 'half' : undefined,
       };
 
-      const upstreamResponse = await fetch(upstreamUrl, requestInit);
+      const upstreamResponse = await fetch(upstreamUrl.toString(), requestInit);
       this.gatewayMetricsService.recordUpstreamStatus(upstreamResponse.status);
 
       res.status(upstreamResponse.status);
+      const connectionHeaders = new Set(
+        (upstreamResponse.headers.get('connection') ?? '')
+          .toLowerCase()
+          .split(',')
+          .map((name) => name.trim()),
+      );
+      const decompressed = /\b(gzip|deflate|br)\b/i.test(
+        upstreamResponse.headers.get('content-encoding') ?? '',
+      );
       upstreamResponse.headers.forEach((value, key) => {
-        if (BLOCKED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        if (
+          BLOCKED_RESPONSE_HEADERS.has(key.toLowerCase()) ||
+          connectionHeaders.has(key.toLowerCase()) ||
+          key.toLowerCase() === 'content-length' ||
+          (decompressed && key.toLowerCase() === 'content-encoding')
+        ) {
           return;
         }
         res.setHeader(key, value);
@@ -362,10 +389,6 @@ export class GatewayProxyMiddleware implements NestMiddleware {
 
       await this.markUpstreamSuccess(target);
     } catch (error) {
-      if (error instanceof PayloadTooLargeException) {
-        this.gatewayMetricsService.recordPayloadTooLarge();
-      }
-
       if (
         typeof error === 'object' &&
         error !== null &&
@@ -424,9 +447,6 @@ export class GatewayProxyMiddleware implements NestMiddleware {
       this.rateLimitWindowMs,
     );
     if (count > this.rateLimitMaxRequests) {
-      this.gatewayMetricsService.recordGatewayHttpStatus(
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
       throw new HttpException(
         'Rate limit exceeded. Please retry later.',
         HttpStatus.TOO_MANY_REQUESTS,
@@ -439,6 +459,11 @@ export class GatewayProxyMiddleware implements NestMiddleware {
     const queryIndex = originalUrl.indexOf('?');
     const pathname =
       queryIndex >= 0 ? originalUrl.slice(0, queryIndex) : originalUrl;
+    if (!isSafeProxyPath(pathname)) {
+      throw new BadRequestException(
+        'Proxy paths cannot contain traversal segments or backslashes',
+      );
+    }
     if (!pathname.startsWith('/api/')) {
       return undefined;
     }

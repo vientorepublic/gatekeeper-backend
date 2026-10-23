@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -46,6 +47,7 @@ interface CachedAuthenticatedApiKey {
 
 @Injectable()
 export class ApiKeysService {
+  private readonly logger = new Logger(ApiKeysService.name);
   private static readonly AUTH_CACHE_TTL_MS = 30_000;
   private readonly lastUsedAtThrottle = new Map<string, number>();
   private readonly lastUsedAtUpdateIntervalMs = 60_000;
@@ -238,8 +240,12 @@ export class ApiKeysService {
           lastUsedAt: new Date(now),
         },
       )
-      .catch(() => {
+      .catch((error: unknown) => {
         this.lastUsedAtThrottle.delete(apiKeyId);
+        this.logger.warn(
+          'Unable to update API key usage timestamp',
+          error instanceof Error ? error.name : 'UnknownError',
+        );
       });
   }
 
