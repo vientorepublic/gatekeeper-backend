@@ -347,6 +347,29 @@ describe('Gateway proxy e2e', () => {
     await app.close();
   });
 
+  it('does not forward stale compression or connection-nominated response headers', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          'content-type': 'application/json',
+          'content-encoding': 'gzip',
+          'content-length': '999',
+          connection: 'x-private',
+          'x-private': 'secret',
+        },
+      }),
+    );
+    const server = app.getHttpServer() as Parameters<typeof request>[0];
+    const response = await request(server)
+      .get('/api/hashguard/v1/ping')
+      .set('authorization', 'Bearer gk_test_key')
+      .expect(200);
+    expect(response.body).toEqual({ ok: true });
+    expect(response.headers['content-encoding']).toBeUndefined();
+    expect(response.headers['x-private']).toBeUndefined();
+    expect(response.headers['content-length']).not.toBe('999');
+  });
+
   it('forwards versioned namespace path tail correctly', async () => {
     const server = app.getHttpServer() as Parameters<typeof request>[0];
 
@@ -1016,11 +1039,9 @@ describe('Auth e2e validation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Rate limiting security tests
 // A dedicated module is used so the middleware is constructed with a low
 // threshold (2 req / window) without affecting the main test module state.
-// ---------------------------------------------------------------------------
 
 const rateLimitConfigServiceMock = {
   get: (key: string) => {
@@ -1136,11 +1157,9 @@ describe('Gateway proxy rate limiting', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // JWT audience (`aud`) validation tests
 // A dedicated module is used so the guard is constructed with a real
 // JWT secret, allowing tokens to be signed and verified in-process.
-// ---------------------------------------------------------------------------
 
 const JWT_TEST_SECRET = 'e2e-test-jwt-secret-do-not-use-in-prod';
 

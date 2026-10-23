@@ -16,7 +16,7 @@ import type { Request } from 'express';
 import { ApiKeysService } from './api-keys.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Oauth2Service } from './oauth2.service';
-import { UserEntity } from './entities/user.entity';
+import type { UserEntity } from './entities/user.entity';
 import type { GatewayUserIdentity } from '../../common/types/gateway.types';
 import { ConfigService } from '@nestjs/config';
 import type { RouteMap } from '../../common/types/gateway.types';
@@ -52,9 +52,7 @@ export class AuthController {
   @Get('namespaces')
   @UseGuards(JwtAuthGuard)
   getNamespaces(): NamespacesResponseDto {
-    const routeMap = this.configService.get<RouteMap>('gateway.routeMap', {
-      infer: true,
-    });
+    const routeMap = this.configService.get<RouteMap>('gateway.routeMap');
 
     if (!routeMap) {
       throw new ConflictException('ROUTE_MAP is not configured');
@@ -68,9 +66,7 @@ export class AuthController {
   @Get('route-map')
   @UseGuards(JwtAuthGuard)
   getRouteGuide(): RouteGuideResponseDto {
-    const routeMap = this.configService.get<RouteMap>('gateway.routeMap', {
-      infer: true,
-    });
+    const routeMap = this.configService.get<RouteMap>('gateway.routeMap');
 
     if (!routeMap) {
       throw new ConflictException('ROUTE_MAP is not configured');
@@ -89,9 +85,7 @@ export class AuthController {
                 namespace,
                 supportsAnyVersion: false,
                 versions: Object.keys(
-                  isVersionedNamespaceRoute(entry)
-                    ? entry.versions
-                    : (entry as Record<string, unknown>),
+                  isVersionedNamespaceRoute(entry) ? entry.versions : entry,
                 ).sort((left, right) => left.localeCompare(right)),
               };
 
@@ -226,10 +220,11 @@ export class AuthController {
   private requireUser(
     req: Request & { user?: GatewayUserIdentity },
   ): GatewayUserIdentity & { userId: string } {
-    if (!req.user?.userId) {
+    const user = req.user;
+    if (!user?.userId) {
       throw new UnauthorizedException('Authenticated user is required');
     }
-    return req.user as GatewayUserIdentity & { userId: string };
+    return { ...user, userId: user.userId };
   }
 
   private toUserDto(user: UserEntity): OAuth2UserDto {

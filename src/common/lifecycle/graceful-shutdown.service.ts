@@ -8,18 +8,6 @@ import {
 import type { Cache } from 'cache-manager';
 import { DataSource } from 'typeorm';
 
-interface DisconnectableStore {
-  disconnect: () => unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isDisconnectableStore(value: unknown): value is DisconnectableStore {
-  return isRecord(value) && typeof value.disconnect === 'function';
-}
-
 @Injectable()
 export class GracefulShutdownService implements OnApplicationShutdown {
   private readonly logger = new Logger(GracefulShutdownService.name);
@@ -34,8 +22,19 @@ export class GracefulShutdownService implements OnApplicationShutdown {
       `Received ${signal ?? 'shutdown signal'}. Starting graceful shutdown...`,
     );
 
-    await this.closeDatabaseConnection();
-    await this.closeCacheStores();
+    const results = await Promise.allSettled([
+      this.closeDatabaseConnection(),
+      this.closeCacheStores(),
+    ]);
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason as unknown] : [],
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        'Failed to close application resources',
+      );
+    }
 
     this.logger.log('Graceful shutdown completed');
   }
@@ -50,22 +49,14 @@ export class GracefulShutdownService implements OnApplicationShutdown {
   }
 
   private async closeCacheStores(): Promise<void> {
-    const manager = this.cacheManager as unknown;
-    if (!isRecord(manager)) {
-      return;
-    }
-
-    const stores = manager.stores;
-    if (!Array.isArray(stores)) {
-      return;
-    }
-
-    for (const store of stores) {
-      if (!isDisconnectableStore(store)) {
-        continue;
-      }
-
-      await store.disconnect();
+    const results = await Promise.allSettled(
+      this.cacheManager.stores.map((store) => store.disconnect()),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason as unknown] : [],
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Failed to disconnect cache stores');
     }
 
     this.logger.log('Cache stores disconnected');

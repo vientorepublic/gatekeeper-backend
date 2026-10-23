@@ -9,9 +9,19 @@ import { verify } from 'jsonwebtoken';
 import { ApiKeysService } from './api-keys.service';
 import { IdentityService } from './identity.service';
 import type { JwtClaims } from '../../common/types/gateway.types';
+import {
+  isRecord,
+  isNonEmptyString,
+} from '../../common/utils/validation.utils';
 
 function isJwtClaims(value: unknown): value is JwtClaims {
-  return typeof value === 'object' && value !== null;
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.sub) &&
+    ['uid', 'provider', 'email', 'scope'].every(
+      (key) => value[key] === undefined || typeof value[key] === 'string',
+    )
+  );
 }
 
 @Injectable()
@@ -32,7 +42,7 @@ export class JwtAuthGuard implements CanActivate {
     const namespace = request.params?.namespace;
 
     const apiKey = request.headers['x-api-key'];
-    if (apiKey && apiKey.length > 0) {
+    if (typeof apiKey === 'string' && apiKey.length > 0) {
       const apiKeyUser = await this.apiKeysService.authenticateApiKey(
         apiKey,
         namespace,
@@ -48,7 +58,7 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const authHeader = request.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
+    if (typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
       throw new UnauthorizedException('Missing bearer token or x-api-key');
     }
 
@@ -66,11 +76,13 @@ export class JwtAuthGuard implements CanActivate {
         algorithms: ['HS256'],
         audience: 'gatekeeper',
       });
-      const claims = isJwtClaims(decoded) ? decoded : {};
-      request.user = this.identityService.toIdentity(claims);
+      if (!isJwtClaims(decoded)) {
+        throw new UnauthorizedException('Invalid token claims');
+      }
+      request.user = this.identityService.toIdentity(decoded);
       return true;
-    } catch {
-      throw new UnauthorizedException('Invalid token');
+    } catch (error) {
+      throw new UnauthorizedException('Invalid token', { cause: error });
     }
   }
 }

@@ -11,7 +11,7 @@ import { InitialAuthSchema20260409000000 } from '../migrations/20260409000000-in
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const db = configService.get<DatabaseConfig>('gateway.database')!;
+        const db = configService.getOrThrow<DatabaseConfig>('gateway.database');
 
         return {
           type: 'mariadb' as const,

@@ -4,9 +4,24 @@ import {
   getProxyErrorCode,
   isResolvedRoute,
   matchesPublicPath,
+  isSafeProxyPath,
 } from './gateway-proxy.utils';
 
 describe('gateway-proxy.utils', () => {
+  it.each([
+    '/api/app/v1/docs/../admin',
+    '/api/app/v1/docs/%2e%2e/admin',
+    '/api/app/v1/..%2fadmin',
+    '/api/app/v1/\\evil.example',
+    '/api/app/v1/%5cevil.example',
+    '/api/app/v1/%zz',
+  ])('rejects ambiguous proxy paths: %s', (path) => {
+    expect(isSafeProxyPath(path)).toBe(false);
+  });
+
+  it('allows encoded ordinary path values', () => {
+    expect(isSafeProxyPath('/api/app/v1/users/a%20b')).toBe(true);
+  });
   describe('isResolvedRoute', () => {
     it('returns true for valid resolved route shape', () => {
       expect(
@@ -40,6 +55,11 @@ describe('gateway-proxy.utils', () => {
   });
 
   describe('matchesPublicPath', () => {
+    it('does not interpret an empty method allowlist as public access', () => {
+      expect(
+        matchesPublicPath([{ path: '/admin', methods: [] }], '/admin', 'GET'),
+      ).toBe(false);
+    });
     it('matches exact path', () => {
       expect(matchesPublicPath([{ path: '/health' }], '/health', 'GET')).toBe(
         true,
@@ -137,6 +157,9 @@ describe('gateway-proxy.utils', () => {
           authorization: 'Bearer token',
           'x-api-key': 'gk_example',
           'content-length': '12',
+          connection: 'x-internal-secret',
+          'x-internal-secret': 'private-value',
+          'transfer-encoding': 'chunked',
           accept: ['application/json', 'text/plain'],
         },
       };
@@ -148,6 +171,9 @@ describe('gateway-proxy.utils', () => {
 
       expect(headers.get('host')).toBeNull();
       expect(headers.get('content-length')).toBeNull();
+      expect(headers.get('connection')).toBeNull();
+      expect(headers.get('x-internal-secret')).toBeNull();
+      expect(headers.get('transfer-encoding')).toBeNull();
       expect(headers.get('authorization')).toBeNull();
       expect(headers.get('x-api-key')).toBeNull();
       expect(headers.get('accept')).toBe('application/json,text/plain');
