@@ -1,26 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import KeyvRedis from '@keyv/redis';
-
-/**
- * Minimal subset of the @redis/client commands used for proxy state.
- * Defined as a structural interface so that the @redis/client union type
- * (RedisClientType | RedisClusterType | RedisSentinelType) satisfies it.
- */
-interface RedisStateClient {
-  readonly isOpen: boolean;
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  incr(key: string): Promise<number>;
-  pExpire(key: string, milliseconds: number): Promise<boolean>;
-  get(key: string): Promise<string | null>;
-  set(
-    key: string,
-    value: string,
-    options?: { PX?: number },
-  ): Promise<string | null>;
-  del(key: string | string[]): Promise<number>;
-}
+import { isRecord } from '../../common/utils/validation.utils';
 
 interface CircuitState {
   consecutiveFailures: number;
@@ -41,22 +22,24 @@ const KEY_PREFIX = 'gatekeeper:proxy';
  */
 @Injectable()
 export class ProxyStateService implements OnModuleInit, OnModuleDestroy {
-  private readonly redis: RedisStateClient | null;
+  private readonly redis: KeyvRedis<unknown>['client'] | null;
 
   // In-memory fallbacks (used when Redis is not configured)
   private readonly rateLimitMap = new Map<
     string,
     { count: number; windowStart: number }
   >();
-  private readonly circuitMap = new Map<string, CircuitState>();
+  private readonly circuitMap = new Map<
+    string,
+    { state: CircuitState; expiresAt: number }
+  >();
 
   constructor(private readonly configService: ConfigService) {
     const redisUrl = this.configService.get<string>('gateway.redisUrl');
     if (redisUrl) {
       const keyvRedis = new KeyvRedis(redisUrl);
-      // @keyv/redis does not call connect() until the first Keyv operation;
-      // cast to the minimal interface and connect explicitly in onModuleInit.
-      this.redis = keyvRedis.client as unknown as RedisStateClient;
+      // Proxy counters use the native Redis client rather than the Keyv key-value API.
+      this.redis = keyvRedis.client;
     } else {
       this.redis = null;
     }
@@ -70,7 +53,7 @@ export class ProxyStateService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     if (this.redis?.isOpen) {
-      await this.redis.disconnect();
+      await this.redis.close();
     }
   }
 
@@ -122,10 +105,32 @@ export class ProxyStateService implements OnModuleInit, OnModuleDestroy {
 
     if (this.redis) {
       const value = await this.redis.get(key);
-      return value ? (JSON.parse(value) as CircuitState) : null;
+      if (!value) return null;
+      const parsed: unknown = JSON.parse(value);
+      if (
+        !isRecord(parsed) ||
+        typeof parsed.consecutiveFailures !== 'number' ||
+        !Number.isSafeInteger(parsed.consecutiveFailures) ||
+        parsed.consecutiveFailures < 0 ||
+        typeof parsed.openUntil !== 'number' ||
+        !Number.isFinite(parsed.openUntil) ||
+        parsed.openUntil < 0
+      ) {
+        throw new Error('Invalid cached circuit state');
+      }
+      return {
+        consecutiveFailures: parsed.consecutiveFailures,
+        openUntil: parsed.openUntil,
+      };
     }
 
-    return this.circuitMap.get(target) ?? null;
+    const cached = this.circuitMap.get(target);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      this.circuitMap.delete(target);
+      return null;
+    }
+    return { ...cached.state };
   }
 
   async setCircuitState(
@@ -140,7 +145,10 @@ export class ProxyStateService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.circuitMap.set(target, state);
+    this.circuitMap.set(target, {
+      state: { ...state },
+      expiresAt: Date.now() + ttlMs,
+    });
   }
 
   async deleteCircuitState(target: string): Promise<void> {

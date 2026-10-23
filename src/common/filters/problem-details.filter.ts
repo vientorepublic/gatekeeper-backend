@@ -7,16 +7,13 @@ import {
 } from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
 import type { Request, Response } from 'express';
+import { isRecord } from '../utils/validation.utils';
 
 interface ProblemDetails {
   title: string;
   status: number;
   detail: string;
   instance: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function getDetailFromHttpExceptionResponse(responseBody: unknown): string {

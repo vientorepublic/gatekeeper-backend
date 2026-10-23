@@ -12,7 +12,7 @@ import { RouteRegistryService } from './route-registry.service';
   providers: [RouteRegistryService, ProxyStateService, GatewayProxyMiddleware],
 })
 export class GatewayModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
+  configure(consumer: MiddlewareConsumer): void {
     consumer.apply(GatewayProxyMiddleware).forRoutes(GatewayController);
   }
 }

@@ -1,4 +1,22 @@
-import type { VersionedNamespaceRoute } from '../types/gateway.types';
+import type {
+  VersionedNamespaceRoute,
+  PublicPathRule,
+} from '../types/gateway.types';
+import { isRecord } from './validation.utils';
+
+export function isPublicPathRule(value: unknown): value is PublicPathRule {
+  return (
+    isRecord(value) &&
+    typeof value.path === 'string' &&
+    value.path.trim().length > 0 &&
+    (value.methods === undefined ||
+      (Array.isArray(value.methods) &&
+        value.methods.length > 0 &&
+        value.methods.every(
+          (method) => typeof method === 'string' && method.trim().length > 0,
+        )))
+  );
+}
 
 /**
  * Type guard that narrows an unknown value to {@link VersionedNamespaceRoute}.
@@ -12,10 +30,14 @@ export function isVersionedNamespaceRoute(
   value: unknown,
 ): value is VersionedNamespaceRoute {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    'versions' in value &&
-    typeof (value as Record<string, unknown>).versions === 'object' &&
-    (value as Record<string, unknown>).versions !== null
+    isRecord(value) &&
+    isRecord(value.versions) &&
+    Object.values(value.versions).every(
+      (target) => typeof target === 'string',
+    ) &&
+    (value.public === undefined || typeof value.public === 'boolean') &&
+    (value.publicPaths === undefined ||
+      (Array.isArray(value.publicPaths) &&
+        value.publicPaths.every(isPublicPathRule)))
   );
 }

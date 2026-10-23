@@ -1,5 +1,31 @@
 import type { Request } from 'express';
 import type { PublicPathRule } from '../../common/types/gateway.types';
+import { isPublicPathRule } from '../../common/utils/gateway-route.utils';
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+export function isSafeProxyPath(path: string): boolean {
+  try {
+    return path.split('/').every((segment) => {
+      const decoded = decodeURIComponent(segment);
+      return (
+        !decoded.includes('\\') &&
+        decoded.split('/').every((part) => part !== '.' && part !== '..')
+      );
+    });
+  } catch {
+    return false;
+  }
+}
 
 export interface RouteKey {
   namespace: string;
@@ -27,7 +53,8 @@ export function isResolvedRoute(value: unknown): value is {
     typeof candidate.target === 'string' &&
     typeof candidate.keepVersionPrefix === 'boolean' &&
     typeof candidate.isPublic === 'boolean' &&
-    Array.isArray(candidate.publicPaths)
+    Array.isArray(candidate.publicPaths) &&
+    candidate.publicPaths.every(isPublicPathRule)
   );
 }
 
@@ -52,7 +79,6 @@ export function matchesPublicPath(
   return rules.some((rule) => {
     if (
       rule.methods &&
-      rule.methods.length > 0 &&
       !rule.methods.map((m) => m.toUpperCase()).includes(upperMethod)
     ) {
       return false;
@@ -100,9 +126,19 @@ export function buildUpstreamHeaders(
   issuerHint?: string,
 ): Headers {
   const headers = new Headers();
+  const connectionHeaders = new Set(
+    String(req.headers.connection ?? '')
+      .toLowerCase()
+      .split(',')
+      .map((name) => name.trim()),
+  );
 
   for (const [name, value] of Object.entries(req.headers)) {
-    if (typeof value === 'undefined') {
+    if (
+      typeof value === 'undefined' ||
+      HOP_BY_HOP_HEADERS.has(name.toLowerCase()) ||
+      connectionHeaders.has(name.toLowerCase())
+    ) {
       continue;
     }
 

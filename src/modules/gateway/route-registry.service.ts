@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Cache } from 'cache-manager';
 import type { ResolvedRoute, RouteMap } from '../../common/types/gateway.types';
 import { isVersionedNamespaceRoute } from '../../common/utils/gateway-route.utils';
+import { isResolvedRoute } from './gateway-proxy.utils';
 
 @Injectable()
 export class RouteRegistryService {
@@ -20,12 +21,15 @@ export class RouteRegistryService {
     // contain the ':' separator (e.g. namespace="ns:v1" vs version="v1").
     const cacheKey = `route:${encodeURIComponent(namespace)}:${encodeURIComponent(version)}`;
     const cached = await this.cacheManager.get<ResolvedRoute>(cacheKey);
-    if (cached) {
+    if (isResolvedRoute(cached)) {
       return cached;
     }
 
     const routeMap = this.configService.get<RouteMap>('gateway.routeMap');
-    const namespaceEntry = routeMap?.[namespace];
+    const namespaceEntry =
+      routeMap && Object.hasOwn(routeMap, namespace)
+        ? routeMap[namespace]
+        : undefined;
     if (!namespaceEntry) {
       return undefined;
     }
@@ -40,7 +44,9 @@ export class RouteRegistryService {
         publicPaths: [],
       };
     } else if (isVersionedNamespaceRoute(namespaceEntry)) {
-      const target = namespaceEntry.versions[version];
+      const target = Object.hasOwn(namespaceEntry.versions, version)
+        ? namespaceEntry.versions[version]
+        : undefined;
       if (!target) {
         return undefined;
       }
@@ -52,7 +58,9 @@ export class RouteRegistryService {
       };
     } else {
       // Legacy flat version map
-      const target = namespaceEntry[version];
+      const target = Object.hasOwn(namespaceEntry, version)
+        ? namespaceEntry[version]
+        : undefined;
       if (!target) {
         return undefined;
       }

@@ -28,27 +28,6 @@ export interface GatewayMetricsSnapshot {
 
 @Injectable()
 export class GatewayMetricsService {
-  // HTTP status code counts from upstream responses
-  private readonly counts: ProxyStatusCounts = {
-    total: 0,
-    upstream2xx: 0,
-    upstream3xx: 0,
-    upstream4xx: 0,
-    upstream5xx: 0,
-    gateway4xx: 0,
-    gateway5xx: 0,
-    timeouts: 0,
-    circuitOpenRejections: 0,
-    payloadTooLarge: 0,
-  };
-
-  // Number of requests currently being processed
-  private inFlight = 0;
-
-  // Latency tracking for calculating average latency over time
-  private latencyCount = 0;
-  private latencySumMs = 0;
-
   private static readonly EMPTY_COUNTS: ProxyStatusCounts = {
     total: 0,
     upstream2xx: 0,
@@ -61,6 +40,17 @@ export class GatewayMetricsService {
     circuitOpenRejections: 0,
     payloadTooLarge: 0,
   };
+
+  private readonly counts: ProxyStatusCounts = {
+    ...GatewayMetricsService.EMPTY_COUNTS,
+  };
+
+  // Number of requests currently being processed
+  private inFlight = 0;
+
+  // Latency tracking for calculating average latency over time
+  private latencyCount = 0;
+  private latencySumMs = 0;
 
   // Sampler to track event loop lag over time
   private readonly lagSamplesMs: number[] = [];

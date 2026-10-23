@@ -76,6 +76,8 @@ describe('RouteRegistryService', () => {
         Promise.resolve({
           target: 'http://cached.internal',
           keepVersionPrefix: true,
+          isPublic: false,
+          publicPaths: [],
         }),
       ),
       set: jest.fn(),
@@ -93,6 +95,8 @@ describe('RouteRegistryService', () => {
     await expect(service.getTarget('any', 'v1')).resolves.toEqual({
       target: 'http://cached.internal',
       keepVersionPrefix: true,
+      isPublic: false,
+      publicPaths: [],
     });
     expect(configService.get).not.toHaveBeenCalled();
   });
