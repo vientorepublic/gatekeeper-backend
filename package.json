@@ -1,6 +1,6 @@
 {
   "name": "gatekeeper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "",
   "author": "",
   "private": true,
@@ -88,6 +88,9 @@
     "testEnvironment": "node"
   },
   "overrides": {
+    "@nestjs/platform-express": {
+      "multer@2.4.0": "2.5.0"
+    },
     "autocannon": {
       "hyperid": "^4.0.0"
     }

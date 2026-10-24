@@ -2,7 +2,7 @@
 
 ## 실행 환경
 
-로컬 설치·실행은 [README](../README.md), 변수는 [환경 설정](configuration.md)을 따릅니다. Dockerfile은 Node.js 24 기반 multistage 빌드이며 비루트 사용자로 `node dist/main`을 실행합니다. HTTP 포트는 기본 3000입니다.
+로컬 설치·실행은 [README](../README.md), 변수는 [환경 설정](configuration.md)을 따릅니다. Dockerfile은 Node.js 24.22.1 기반 multistage 빌드이며 비루트 사용자로 `node dist/main`을 실행합니다. HTTP 포트는 기본 3000입니다.
 
 메타 저장소 Compose 사용 시 다음을 구분합니다.
 
@@ -14,6 +14,14 @@
 Compose는 메타 저장소의 두 앱 `.env`를 읽습니다. 외부 네트워크와 DB 사용자·권한, 컨테이너 내부에서 도달할 수 있는 업스트림 주소를 먼저 준비합니다. `localhost`를 컨테이너 안의 다른 서비스 주소로 사용하지 않습니다. Compose의 예제 DB 인증정보는 운영 비밀값으로 사용하지 않습니다.
 
 DB는 기본적으로 시작 시 migration을 실행합니다. 운영에서는 `DB_SYNCHRONIZE=false`를 유지하고 migration과 복구 순서를 배포 전에 확인합니다. SIGINT/SIGTERM 종료 시 DB·캐시 연결을 정리합니다.
+
+## Node2Shell 보안 기준
+
+Node.js 24.22.1은 Brotli 디코더 취약점 CVE-2026-111497을 수정한 버전입니다. 직접 실행하는 호스트도 24.22.1 이상인 24.x를 사용합니다. NestJS의 요청 본문 파서와 외부 `fetch()` 응답은 Brotli 디코더에 도달할 수 있으므로 Express나 npm 의존성 갱신만으로 해결되지 않습니다.
+
+Dockerfile 변경은 이미 실행 중인 컨테이너를 갱신하지 않습니다. 승인된 배포 절차에서 이미지를 다시 빌드하고 컨테이너를 교체한 뒤 `docker exec gatekeeper-backend node --version`으로 실제 런타임을 확인합니다. `/health` 응답만으로 패치 적용을 판정하지 않습니다. 롤백 시에도 같은 수정 버전 이상의 Node 이미지를 사용합니다.
+
+[Node.js 보안 공지](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)를 기준으로 런타임을 관리합니다. `Accept-Encoding` 제한이나 WAF는 외부 서버의 Brotli 응답까지 해결하는 패치 대체 수단이 아닙니다.
 
 ## 상태와 지표
 
