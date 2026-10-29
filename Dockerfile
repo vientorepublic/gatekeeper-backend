@@ -1,10 +1,10 @@
-FROM node:24.22.1-alpine AS hardened-malloc
+FROM node:26.13.0-alpine AS hardened-malloc
 RUN apk add --no-cache git build-base linux-headers
 RUN git clone --depth 1 https://github.com/GrapheneOS/hardened_malloc.git /hardened_malloc
 WORKDIR /hardened_malloc
 RUN make CONFIG_NATIVE=false CONFIG_CXX_ALLOCATOR=false
 
-FROM node:24.22.1-alpine AS base
+FROM node:26.13.0-alpine AS base
 
 FROM base AS deps
 WORKDIR /app
